@@ -1,22 +1,16 @@
 'use strict';
 
-// index.html 本体のロジックをそのまま実行して回帰テストする。
-// (ロジックをここに複製すると index.html との乖離が起きるため、
-//  index.html 内の <script> から純粋ロジック部分だけを抽出して実行する)
+// app.js 本体のロジックをそのまま実行して回帰テストする。
+// (ロジックをここに複製すると app.js との乖離が起きるため、
+//  app.js から純粋ロジック部分だけを抽出して実行する)
 //
 // 実行方法: node tests/logic.test.js
 
 var fs = require('fs');
 var path = require('path');
 
-var htmlPath = path.join(__dirname, '..', 'index.html');
-var html = fs.readFileSync(htmlPath, 'utf8');
-
-var scriptMatch = html.match(/<script>([\s\S]*?)<\/script>/);
-if (!scriptMatch) {
-  throw new Error('index.html 内に <script> ブロックが見つかりません');
-}
-var scriptBody = scriptMatch[1];
+var appJsPath = path.join(__dirname, '..', 'app.js');
+var scriptBody = fs.readFileSync(appJsPath, 'utf8');
 
 var START_MARKER = "'use strict';";
 var END_MARKER = '// ---- DOM wiring ----';
@@ -24,8 +18,8 @@ var startIdx = scriptBody.indexOf(START_MARKER);
 var endIdx = scriptBody.indexOf(END_MARKER);
 if (startIdx === -1 || endIdx === -1) {
   throw new Error(
-    'index.html 内のマーカー(\'use strict\'; / // ---- DOM wiring ----)が見つかりません。' +
-    'index.html の構造が変わった場合は、このテストの抽出ロジックも見直してください。'
+    'app.js 内のマーカー(\'use strict\'; / // ---- DOM wiring ----)が見つかりません。' +
+    'app.js の構造が変わった場合は、このテストの抽出ロジックも見直してください。'
   );
 }
 var pureLogicSource = scriptBody.slice(startIdx + START_MARKER.length, endIdx);
