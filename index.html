@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>srtgen — アラビア語原稿 → SRT変換</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-border: #2a2e38;
+    --text: #e8e9ec;
+    --text-dim: #9aa0ac;
+    --accent: #4f8cff;
+    --accent-hover: #6c9eff;
+    --card-bg: #1d212b;
+    --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", "Yu Gothic", Arial, sans-serif;
+  }
+  header {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  header h1 {
+    margin: 0;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  header p {
+    margin: 4px 0 0;
+    font-size: 13px;
+    color: var(--text-dim);
+  }
+  main {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    padding: 20px 24px 40px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+  @media (max-width: 900px) {
+    main {
+      grid-template-columns: 1fr;
+    }
+  }
+  section.pane {
+    background: var(--panel);
+    border: 1px solid var(--panel-border);
+    border-radius: 10px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .field-label {
+    font-size: 13px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    display: block;
+  }
+  textarea#manuscript {
+    width: 100%;
+    min-height: 360px;
+    resize: vertical;
+    background: #0d0f14;
+    color: var(--text);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 14px;
+    font-size: 18px;
+    line-height: 2;
+    font-family: "Tahoma", "Segoe UI", "Noto Sans Arabic", "Arial", sans-serif;
+  }
+  textarea#manuscript:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  .settings-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px;
+    align-items: center;
+    margin-top: 16px;
+  }
+  .settings-row .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .settings-row input[type="number"] {
+    width: 100px;
+    background: #0d0f14;
+    color: var(--text);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 14px;
+  }
+  .checkbox-field {
+    flex-direction: row !important;
+    align-items: center;
+    gap: 8px !important;
+  }
+  .checkbox-field input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+  }
+  button#downloadBtn {
+    margin-top: 20px;
+    width: 100%;
+    padding: 12px 16px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  button#downloadBtn:hover:not(:disabled) {
+    background: var(--accent-hover);
+  }
+  button#downloadBtn:disabled {
+    background: #2a2e38;
+    color: var(--text-dim);
+    cursor: not-allowed;
+  }
+  .stats-bar {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+  }
+  .stat .stat-value {
+    font-size: 20px;
+    font-weight: 700;
+  }
+  .stat .stat-label {
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  #previewList {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    overflow-y: auto;
+    max-height: 560px;
+  }
+  .cue-card {
+    background: var(--card-bg);
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 10px 14px;
+  }
+  .cue-meta {
+    display: flex;
+    gap: 14px;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .cue-index {
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .cue-text {
+    font-size: 17px;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    font-family: "Tahoma", "Segoe UI", "Noto Sans Arabic", "Arial", sans-serif;
+  }
+  #emptyState {
+    color: var(--text-dim);
+    font-size: 14px;
+    text-align: center;
+    padding: 60px 20px;
+    border: 1px dashed var(--panel-border);
+    border-radius: 8px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>srtgen</h1>
+  <p>アラビア語原稿を貼り付けると、Filmora読み込み用のSRT字幕ファイルを生成します</p>
+</header>
+
+<main>
+  <section class="pane" id="inputPane">
+    <label class="field-label" for="manuscript">原稿テキスト</label>
+    <textarea id="manuscript" dir="rtl" spellcheck="false" placeholder="ここにアラビア語の原稿を貼り付けてください..."></textarea>
+
+    <div class="settings-row">
+      <div class="field">
+        <label class="field-label" for="cps">読み速度（cps）</label>
+        <input type="number" id="cps" value="12" step="0.5" min="0.1">
+      </div>
+      <div class="field checkbox-field">
+        <input type="checkbox" id="bom">
+        <label class="field-label" for="bom" style="margin:0;">BOM付き出力</label>
+      </div>
+    </div>
+
+    <button id="downloadBtn" disabled>SRTファイルをダウンロード</button>
+  </section>
+
+  <section class="pane" id="previewPane">
+    <div class="stats-bar">
+      <div class="stat">
+        <span class="stat-value" id="statCount">0</span>
+        <span class="stat-label">総枚数</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value" id="statDuration">00:00.0</span>
+        <span class="stat-label">総尺</span>
+      </div>
+    </div>
+    <div id="emptyState">原稿を左に貼り付けると、分割結果がここにリアルタイムで表示されます。</div>
+    <div id="previewList" style="display:none;"></div>
+  </section>
+</main>
+
+<script>
+(function () {
+  'use strict';
+
+  // SRT改行コード。Filmora実機テストでCRLFが必要な場合はここを '\r\n' に変更する。
+  var LINE_BREAK = '\n';
+
+  var DELETE_CHARS = new Set(['.', '،', ',']); // . 、 ،  、 ,
+  var KEEP_CHARS = new Set(['؟', '?', '!', '—']); // ؟ ? ! —
+
+  function isDelimiter(ch) {
+    return DELETE_CHARS.has(ch) || KEEP_CHARS.has(ch);
+  }
+
+  // 原稿テキストを「字幕ごとの行配列」の配列に分割する。
+  // 許可される加工は: 区切り文字(削除系)の削除 / 各行の前後トリム / 改行による2行字幕化 のみ。
+  function segmentManuscript(text) {
+    var chars = Array.from(text);
+    var n = chars.length;
+    var rawSubtitles = [];
+    var currentLine = '';
+    var currentLines = [];
+    var i = 0;
+
+    while (i < n) {
+      var ch = chars[i];
+
+      if (ch === '\r') {
+        i++;
+        continue;
+      }
+
+      if (ch === '\n') {
+        currentLines.push(currentLine);
+        currentLine = '';
+        i++;
+        continue;
+      }
+
+      if (isDelimiter(ch)) {
+        var keepBuffer = '';
+        while (i < n && isDelimiter(chars[i])) {
+          if (KEEP_CHARS.has(chars[i])) keepBuffer += chars[i];
+          i++;
+        }
+        currentLine += keepBuffer;
+        currentLines.push(currentLine);
+        rawSubtitles.push(currentLines);
+        currentLine = '';
+        currentLines = [];
+        continue;
+      }
+
+      currentLine += ch;
+      i++;
+    }
+
+    currentLines.push(currentLine);
+    rawSubtitles.push(currentLines);
+
+    var subtitles = [];
+    for (var s = 0; s < rawSubtitles.length; s++) {
+      var trimmed = [];
+      for (var l = 0; l < rawSubtitles[s].length; l++) {
+        var t = rawSubtitles[s][l].trim();
+        if (t.length > 0) trimmed.push(t);
+      }
+      if (trimmed.length > 0) subtitles.push(trimmed);
+    }
+    return subtitles;
+  }
+
+  // 累積丸め方式でキュー（連番・開始/終了ms・行・文字数）を構築する。
+  function buildCues(lineGroups, cps) {
+    var rate = (isFinite(cps) && cps > 0) ? cps : 12;
+    var accSeconds = 0;
+    var cues = [];
+    for (var idx = 0; idx < lineGroups.length; idx++) {
+      var lines = lineGroups[idx];
+      var charCount = 0;
+      for (var l = 0; l < lines.length; l++) charCount += Array.from(lines[l]).length;
+      var duration = charCount / rate;
+
+      var startMs = Math.round(accSeconds * 1000);
+      accSeconds += duration;
+      var endMs = Math.round(accSeconds * 1000);
+
+      cues.push({ index: idx + 1, lines: lines, charCount: charCount, startMs: startMs, endMs: endMs });
+    }
+    return cues;
+  }
+
+  function pad(num, len) {
+    return String(num).padStart(len, '0');
+  }
+
+  function formatSrtTime(ms) {
+    ms = Math.max(0, Math.round(ms));
+    var h = Math.floor(ms / 3600000); ms -= h * 3600000;
+    var m = Math.floor(ms / 60000); ms -= m * 60000;
+    var s = Math.floor(ms / 1000); ms -= s * 1000;
+    return pad(h, 2) + ':' + pad(m, 2) + ':' + pad(s, 2) + ',' + pad(ms, 3);
+  }
+
+  function formatTotalDuration(ms) {
+    ms = Math.max(0, Math.round(ms));
+    var minutes = Math.floor(ms / 60000);
+    var secs = (ms % 60000) / 1000;
+    var secsStr = secs.toFixed(1);
+    if (secsStr.indexOf('.') === 1) secsStr = '0' + secsStr;
+    return pad(minutes, 2) + ':' + secsStr;
+  }
+
+  function buildSrt(cues, useBom) {
+    var parts = [];
+    for (var i = 0; i < cues.length; i++) {
+      var cue = cues[i];
+      var text = cue.lines.join(LINE_BREAK);
+      parts.push(
+        cue.index + LINE_BREAK +
+        formatSrtTime(cue.startMs) + ' --> ' + formatSrtTime(cue.endMs) + LINE_BREAK +
+        text
+      );
+    }
+    var content = parts.join(LINE_BREAK + LINE_BREAK) + LINE_BREAK + LINE_BREAK;
+    if (useBom) content = '﻿' + content;
+    return content;
+  }
+
+  // ---- DOM wiring ----
+  var textarea = document.getElementById('manuscript');
+  var cpsInput = document.getElementById('cps');
+  var bomCheckbox = document.getElementById('bom');
+  var downloadBtn = document.getElementById('downloadBtn');
+  var previewList = document.getElementById('previewList');
+  var emptyState = document.getElementById('emptyState');
+  var statCount = document.getElementById('statCount');
+  var statDuration = document.getElementById('statDuration');
+
+  var currentCues = [];
+
+  function buildCard(cue) {
+    var card = document.createElement('div');
+    card.className = 'cue-card';
+
+    var meta = document.createElement('div');
+    meta.className = 'cue-meta';
+
+    var idxSpan = document.createElement('span');
+    idxSpan.className = 'cue-index';
+    idxSpan.textContent = '#' + cue.index;
+
+    var timeSpan = document.createElement('span');
+    timeSpan.className = 'cue-time';
+    timeSpan.textContent = formatSrtTime(cue.startMs) + ' → ' + formatSrtTime(cue.endMs);
+
+    var charSpan = document.createElement('span');
+    charSpan.className = 'cue-chars';
+    charSpan.textContent = cue.charCount + '文字';
+
+    meta.appendChild(idxSpan);
+    meta.appendChild(timeSpan);
+    meta.appendChild(charSpan);
+
+    var body = document.createElement('div');
+    body.className = 'cue-text';
+    body.dir = 'rtl';
+    body.textContent = cue.lines.join('\n');
+
+    card.appendChild(meta);
+    card.appendChild(body);
+    return card;
+  }
+
+  function render() {
+    var text = textarea.value;
+    var cps = parseFloat(cpsInput.value);
+    var lineGroups = segmentManuscript(text);
+    currentCues = buildCues(lineGroups, cps);
+
+    previewList.innerHTML = '';
+    if (currentCues.length === 0) {
+      emptyState.style.display = '';
+      previewList.style.display = 'none';
+    } else {
+      emptyState.style.display = 'none';
+      previewList.style.display = '';
+      var frag = document.createDocumentFragment();
+      for (var i = 0; i < currentCues.length; i++) {
+        frag.appendChild(buildCard(currentCues[i]));
+      }
+      previewList.appendChild(frag);
+    }
+
+    statCount.textContent = String(currentCues.length);
+    var totalMs = currentCues.length ? currentCues[currentCues.length - 1].endMs : 0;
+    statDuration.textContent = formatTotalDuration(totalMs);
+
+    downloadBtn.disabled = currentCues.length === 0;
+  }
+
+  function download() {
+    if (currentCues.length === 0) return;
+    var content = buildSrt(currentCues, bomCheckbox.checked);
+    var blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+
+    var now = new Date();
+    var fname = 'subtitles_' +
+      now.getFullYear() + pad(now.getMonth() + 1, 2) + pad(now.getDate(), 2) + '_' +
+      pad(now.getHours(), 2) + pad(now.getMinutes(), 2) + '.srt';
+
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  textarea.addEventListener('input', render);
+  cpsInput.addEventListener('input', render);
+  downloadBtn.addEventListener('click', download);
+
+  render();
+})();
+</script>
+
+</body>
+</html>
