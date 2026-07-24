@@ -245,8 +245,8 @@
   // SRT改行コード。Filmora実機テストでCRLFが必要な場合はここを '\r\n' に変更する。
   var LINE_BREAK = '\n';
 
-  var DELETE_CHARS = new Set(['.', '،', ',']); // . 、 ،  、 ,
-  var KEEP_CHARS = new Set(['؟', '?', '!', '—']); // ؟ ? ! —
+  var DELETE_CHARS = new Set(['.', '،', ',', '—']); // . 、 ،  、 , 、 —
+  var KEEP_CHARS = new Set(['؟', '?', '!']); // ؟ ? !
 
   function isDelimiter(ch) {
     return DELETE_CHARS.has(ch) || KEEP_CHARS.has(ch);
