@@ -1,28 +1,16 @@
 'use strict';
 
-// app.js 本体のロジックをそのまま実行して回帰テストする。
-// (ロジックをここに複製すると app.js との乖離が起きるため、
-//  app.js から純粋ロジック部分だけを抽出して実行する)
+// logic.js(純粋ロジックのみのファイル)をそのまま実行して回帰テストする。
+// (ロジックをここに複製すると logic.js との乖離が起きるため、
+//  logic.js の内容をまるごと読み込んで実行する)
 //
 // 実行方法: node tests/logic.test.js
 
 var fs = require('fs');
 var path = require('path');
 
-var appJsPath = path.join(__dirname, '..', 'app.js');
-var scriptBody = fs.readFileSync(appJsPath, 'utf8');
-
-var START_MARKER = "'use strict';";
-var END_MARKER = '// ---- DOM wiring ----';
-var startIdx = scriptBody.indexOf(START_MARKER);
-var endIdx = scriptBody.indexOf(END_MARKER);
-if (startIdx === -1 || endIdx === -1) {
-  throw new Error(
-    'app.js 内のマーカー(\'use strict\'; / // ---- DOM wiring ----)が見つかりません。' +
-    'app.js の構造が変わった場合は、このテストの抽出ロジックも見直してください。'
-  );
-}
-var pureLogicSource = scriptBody.slice(startIdx + START_MARKER.length, endIdx);
+var logicJsPath = path.join(__dirname, '..', 'logic.js');
+var pureLogicSource = fs.readFileSync(logicJsPath, 'utf8');
 
 var lib = new Function(
   pureLogicSource +
