@@ -194,6 +194,209 @@
     border: 1px dashed var(--panel-border);
     border-radius: 8px;
   }
+  button.secondary-btn {
+    margin-top: 10px;
+    width: 100%;
+    padding: 10px 16px;
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button.secondary-btn:hover:not(:disabled) {
+    background: #eef3ff;
+  }
+  button.secondary-btn:disabled {
+    color: var(--text-dim);
+    border-color: var(--panel-border);
+    cursor: not-allowed;
+  }
+
+  /* ===== タイムライン編集モード ===== */
+  #editorView {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 0 24px 40px;
+  }
+  .editor-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .editor-btn {
+    padding: 8px 12px;
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .editor-btn:hover {
+    border-color: var(--accent);
+  }
+  .editor-btn.primary-btn {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+  }
+  .editor-btn.primary-btn:hover {
+    background: var(--accent-hover);
+  }
+  .editor-btn.secondary-btn {
+    margin-top: 0;
+    width: auto;
+  }
+  .editor-time {
+    font-variant-numeric: tabular-nums;
+    font-size: 14px;
+    color: var(--text-dim);
+    min-width: 140px;
+  }
+  .editor-sep {
+    width: 1px;
+    align-self: stretch;
+    background: var(--panel-border);
+    margin: 0 4px;
+  }
+  .editor-cps {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  .editor-cps input[type="range"] {
+    width: 120px;
+  }
+  .editor-hint {
+    flex-basis: 100%;
+    font-size: 12px;
+    color: var(--text-dim);
+    min-height: 16px;
+  }
+  .preview-box {
+    padding: 48px 20px;
+    text-align: center;
+    border-bottom: 1px solid var(--panel-border);
+  }
+  .preview-text {
+    font-size: 20px;
+    direction: rtl;
+    white-space: pre-wrap;
+    line-height: 1.6;
+    cursor: text;
+    font-family: "Tahoma", "Segoe UI", "Noto Sans Arabic", "Arial", sans-serif;
+  }
+  .preview-input {
+    font-size: 20px;
+    direction: rtl;
+    text-align: center;
+    width: 80%;
+    max-width: 640px;
+    padding: 8px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    font-family: "Tahoma", "Segoe UI", "Noto Sans Arabic", "Arial", sans-serif;
+  }
+  .timeline-wrap {
+    overflow-x: auto;
+    padding: 16px 0 24px;
+  }
+  .timeline-inner {
+    position: relative;
+    height: 78px;
+  }
+  .ruler {
+    position: relative;
+    height: 20px;
+  }
+  .ruler-tick {
+    position: absolute;
+    top: 0;
+    height: 100%;
+    border-left: 1px solid var(--panel-border);
+    padding-left: 3px;
+    font-size: 10px;
+    color: var(--text-dim);
+    white-space: nowrap;
+  }
+  .clips-track {
+    display: flex;
+    height: 56px;
+  }
+  .clip {
+    position: relative;
+    background: var(--card-bg);
+    border-right: 1px solid var(--bg);
+    padding: 4px 8px;
+    box-sizing: border-box;
+    overflow: hidden;
+    cursor: pointer;
+  }
+  .clip.current {
+    background: #e4ecff;
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .clip.edited::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--accent);
+  }
+  .clip-text {
+    direction: rtl;
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: "Tahoma", "Segoe UI", "Noto Sans Arabic", "Arial", sans-serif;
+  }
+  .clip-dur {
+    font-size: 10px;
+    color: var(--text-dim);
+    margin-top: 2px;
+  }
+  .clip-handle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 10px;
+    cursor: ew-resize;
+  }
+  .clip-handle:hover {
+    background: rgba(47, 111, 237, 0.25);
+  }
+  .playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 0;
+    border-left: 2px solid var(--danger);
+    pointer-events: none;
+    will-change: transform;
+  }
+  .playhead-knob {
+    position: absolute;
+    top: -6px;
+    left: -5px;
+    width: 12px;
+    height: 12px;
+    background: var(--danger);
+    border-radius: 2px;
+  }
 </style>
 </head>
 <body>
@@ -203,7 +406,7 @@
   <p>アラビア語原稿を貼り付けると、Filmora読み込み用のSRT字幕ファイルを生成します</p>
 </header>
 
-<main>
+<main id="mainView">
   <section class="pane" id="inputPane">
     <label class="field-label" for="manuscript">原稿テキスト</label>
     <textarea id="manuscript" dir="rtl" spellcheck="false" placeholder="ここにアラビア語の原稿を貼り付けてください..."></textarea>
@@ -220,6 +423,7 @@
     </div>
 
     <button id="downloadBtn" disabled>SRTファイルをダウンロード</button>
+    <button id="toTimelineBtn" class="secondary-btn" disabled>タイムラインで調整</button>
   </section>
 
   <section class="pane" id="previewPane">
@@ -237,6 +441,39 @@
     <div id="previewList" style="display:none;"></div>
   </section>
 </main>
+
+<div id="editorView" style="display:none;">
+  <div class="editor-header">
+    <button id="playPauseBtn" class="editor-btn" title="スペース: 再生/停止">▶</button>
+    <button id="upBtn" class="editor-btn" title="↑: 前のクリップへ">↑</button>
+    <button id="downBtn" class="editor-btn" title="↓: 次のクリップへ">↓</button>
+    <span class="editor-time" id="timeDisplay">0:00.0 / 0:00.0</span>
+    <span class="editor-sep"></span>
+    <button id="sBtn" class="editor-btn" title="S: ここで切る">S ここで切る</button>
+    <button id="mBtn" class="editor-btn" title="M: 結合">M 結合</button>
+    <button id="undoBtn" class="editor-btn" title="Ctrl+Z: 戻す">戻す（Undo）</button>
+    <span class="editor-sep"></span>
+    <div class="editor-cps">
+      <label for="editorCps">cps</label>
+      <input type="range" id="editorCps" min="8" max="18" step="0.5" value="12">
+      <span id="editorCpsValue">12</span>
+    </div>
+    <span class="editor-sep"></span>
+    <button id="backBtn" class="editor-btn secondary-btn">原稿に戻る</button>
+    <button id="downloadEditorBtn" class="editor-btn primary-btn">SRTダウンロード</button>
+    <div class="editor-hint" id="editorHint"></div>
+  </div>
+
+  <div class="preview-box" id="previewBox"></div>
+
+  <div class="timeline-wrap" id="timelineWrap">
+    <div class="timeline-inner" id="timelineInner">
+      <div class="ruler" id="ruler"></div>
+      <div class="clips-track" id="clipsTrack"></div>
+      <div class="playhead" id="playhead"><div class="playhead-knob"></div></div>
+    </div>
+  </div>
+</div>
 
 <script>
 (function () {
@@ -367,11 +604,200 @@
     return content;
   }
 
+  // ================= タイムライン編集モード: 純粋ロジック =================
+  //
+  // 内部の時間計算はすべて「デシ秒（0.1秒単位の整数）」で行う。
+  // sub.dur 自体は秒(浮動小数)で保持するが、累積・比較・SRTのms変換は
+  // 必ず toDs() で整数化してから行うため、0.1+0.2!==0.3 のような
+  // 浮動小数の誤差が積み上がることがない。
+
+  var MIN_DUR = 0.3; // 秒
+  var PX_PER_SEC = 80;
+
+  function toDs(seconds) {
+    return Math.round(seconds * 10);
+  }
+  function dsToSeconds(ds) {
+    return ds / 10;
+  }
+  function round1(seconds) {
+    return dsToSeconds(toDs(seconds));
+  }
+  function clampDur(seconds) {
+    return Math.max(MIN_DUR, round1(seconds));
+  }
+
+  // 改行を除き、スペース込み・コードポイント単位で文字数を数える(既存の cps 計算方式と同一)。
+  function charCountForText(text) {
+    var lines = text.split('\n');
+    var count = 0;
+    for (var i = 0; i < lines.length; i++) count += Array.from(lines[i]).length;
+    return count;
+  }
+
+  // 生成: 既存の分割ロジック(lineGroups)から編集モード用の subs を組み立てる。
+  // dur は 0.1丸め・最小0.3秒クランプ。全クリップ edited:false。
+  function subsFromLineGroups(lineGroups, cps) {
+    var rate = (isFinite(cps) && cps > 0) ? cps : 12;
+    var subs = [];
+    for (var i = 0; i < lineGroups.length; i++) {
+      var text = lineGroups[i].join('\n');
+      var charCount = charCountForText(text);
+      subs.push({ text: text, dur: clampDur(charCount / rate), edited: false });
+    }
+    return subs;
+  }
+
+  // 各クリップの開始時刻をデシ秒の整数配列で返す(累積誤差なし)。
+  function computeStartsDs(subs) {
+    var starts = [];
+    var acc = 0;
+    for (var i = 0; i < subs.length; i++) {
+      starts.push(acc);
+      acc += toDs(subs[i].dur);
+    }
+    return starts;
+  }
+  function computeStarts(subs) {
+    return computeStartsDs(subs).map(dsToSeconds);
+  }
+  function totalDurationDs(subs) {
+    var acc = 0;
+    for (var i = 0; i < subs.length; i++) acc += toDs(subs[i].dur);
+    return acc;
+  }
+  function totalDuration(subs) {
+    return dsToSeconds(totalDurationDs(subs));
+  }
+
+  // 時刻 t(秒, 連続値)が属するクリップのindexを返す。tはデシ秒に丸めてから
+  // 整数のみで比較するため、境界判定に浮動小数の誤差が入らない。
+  function clipAt(subs, t) {
+    var n = subs.length;
+    if (n === 0) return -1;
+    var startsDs = computeStartsDs(subs);
+    var totalDs = totalDurationDs(subs);
+    var tDs = Math.round(t * 10);
+    if (tDs <= 0) return 0;
+    if (tDs >= totalDs) return n - 1;
+    for (var i = 0; i < n; i++) {
+      var endDs = (i < n - 1) ? startsDs[i + 1] : totalDs;
+      if (tDs < endDs) return i;
+    }
+    return n - 1;
+  }
+
+  function cloneSubs(subs) {
+    var out = [];
+    for (var i = 0; i < subs.length; i++) {
+      out.push({ text: subs[i].text, dur: subs[i].dur, edited: subs[i].edited });
+    }
+    return out;
+  }
+
+  // ドラッグ等による尺の直接指定。常に成功し、0.1丸め・最小0.3秒でクランプする。
+  function setClipDuration(subs, index, rawDurSeconds) {
+    var next = cloneSubs(subs);
+    next[index].dur = clampDur(rawDurSeconds);
+    next[index].edited = true;
+    return next;
+  }
+
+  // S: ヘッドが乗っているクリップの尺を (headTime - クリップ開始時刻) に変更する。
+  // 結果が最小尺(0.3秒)未満なら拒否して元の配列を返す。
+  function trimClipAtHead(subs, index, headTime) {
+    var startsDs = computeStartsDs(subs);
+    var newDurDs = Math.round(headTime * 10) - startsDs[index];
+    if (newDurDs < toDs(MIN_DUR)) {
+      return { ok: false, subs: subs };
+    }
+    var next = cloneSubs(subs);
+    next[index].dur = dsToSeconds(newDurDs);
+    next[index].edited = true;
+    return { ok: true, subs: next };
+  }
+
+  // M: index番目と右隣(index+1)を結合する。テキストは半角スペース連結、尺は合算。
+  // 最終クリップ(右隣が存在しない)なら拒否。
+  function mergeClipAt(subs, index) {
+    if (index < 0 || index >= subs.length - 1) {
+      return { ok: false, subs: subs };
+    }
+    var next = cloneSubs(subs);
+    var a = next[index];
+    var b = next[index + 1];
+    var mergedDurDs = toDs(a.dur) + toDs(b.dur);
+    var merged = { text: a.text + ' ' + b.text, dur: dsToSeconds(mergedDurDs), edited: true };
+    next.splice(index, 2, merged);
+    return { ok: true, subs: next };
+  }
+
+  // Delete: index番目のクリップを削除する。残存クリップの edited フラグには影響しない。
+  function deleteClipAt(subs, index) {
+    if (index < 0 || index >= subs.length) {
+      return { ok: false, subs: subs };
+    }
+    var next = cloneSubs(subs);
+    next.splice(index, 1);
+    return { ok: true, subs: next };
+  }
+
+  // cps変更: edited:false のクリップのみ、自身のテキストの文字数から尺を再計算する。
+  // edited:true のクリップは一切変更しない。
+  function recalcUneditedDurations(subs, cps) {
+    var rate = (isFinite(cps) && cps > 0) ? cps : 12;
+    return subs.map(function (sub) {
+      if (sub.edited) return sub;
+      var charCount = charCountForText(sub.text);
+      return { text: sub.text, dur: clampDur(charCount / rate), edited: false };
+    });
+  }
+
+  // SRT出力用のcues生成。dur は必ず0.1刻みのため、デシ秒の整数累積は
+  // Math.round(累積秒×1000) と数学的に完全に一致し、かつ浮動小数誤差が一切入らない。
+  function subsToCues(subs) {
+    var cues = [];
+    var accDs = 0;
+    for (var i = 0; i < subs.length; i++) {
+      var startMs = accDs * 100;
+      accDs += toDs(subs[i].dur);
+      var endMs = accDs * 100;
+      cues.push({ index: i + 1, lines: subs[i].text.split('\n'), startMs: startMs, endMs: endMs });
+    }
+    return cues;
+  }
+
+  // Undo: 操作前の subs のディープコピーをスタックにpushする。上限50件(古いものから破棄)。
+  var HISTORY_LIMIT = 50;
+  function pushHistory(stack, subs) {
+    var next = stack.slice();
+    next.push(JSON.parse(JSON.stringify(subs)));
+    if (next.length > HISTORY_LIMIT) next.shift();
+    return next;
+  }
+  function popHistory(stack) {
+    if (stack.length === 0) return null;
+    var next = stack.slice();
+    var subs = next.pop();
+    return { stack: next, subs: subs };
+  }
+
+  function formatClock(seconds) {
+    seconds = Math.max(0, seconds);
+    var totalDs = Math.round(seconds * 10);
+    var m = Math.floor(totalDs / 600);
+    var rem = totalDs - m * 600;
+    var s = Math.floor(rem / 10);
+    var d = rem % 10;
+    return m + ':' + pad(s, 2) + '.' + d;
+  }
+
   // ---- DOM wiring ----
   var textarea = document.getElementById('manuscript');
   var cpsInput = document.getElementById('cps');
   var bomCheckbox = document.getElementById('bom');
   var downloadBtn = document.getElementById('downloadBtn');
+  var toTimelineBtn = document.getElementById('toTimelineBtn');
   var previewList = document.getElementById('previewList');
   var emptyState = document.getElementById('emptyState');
   var statCount = document.getElementById('statCount');
@@ -437,6 +863,7 @@
     statDuration.textContent = formatTotalDuration(totalMs);
 
     downloadBtn.disabled = currentCues.length === 0;
+    toTimelineBtn.disabled = currentCues.length === 0;
   }
 
   function download() {
@@ -462,6 +889,491 @@
   textarea.addEventListener('input', render);
   cpsInput.addEventListener('input', render);
   downloadBtn.addEventListener('click', download);
+
+  // ================= タイムライン編集モード: DOM wiring =================
+
+  var mainView = document.getElementById('mainView');
+  var editorView = document.getElementById('editorView');
+  var playPauseBtn = document.getElementById('playPauseBtn');
+  var upBtn = document.getElementById('upBtn');
+  var downBtn = document.getElementById('downBtn');
+  var timeDisplay = document.getElementById('timeDisplay');
+  var sBtn = document.getElementById('sBtn');
+  var mBtn = document.getElementById('mBtn');
+  var undoBtn = document.getElementById('undoBtn');
+  var backBtn = document.getElementById('backBtn');
+  var downloadEditorBtn = document.getElementById('downloadEditorBtn');
+  var editorHint = document.getElementById('editorHint');
+  var editorCps = document.getElementById('editorCps');
+  var editorCpsValue = document.getElementById('editorCpsValue');
+  var previewBox = document.getElementById('previewBox');
+  var timelineWrap = document.getElementById('timelineWrap');
+  var timelineInner = document.getElementById('timelineInner');
+  var ruler = document.getElementById('ruler');
+  var clipsTrack = document.getElementById('clipsTrack');
+  var playhead = document.getElementById('playhead');
+
+  var mode = 'input'; // 'input' | 'edit'
+  var subs = [];
+  var history = [];
+  var headTime = 0;
+  var playing = false;
+  var rafId = null;
+  var playStartPerf = 0;
+  var playStartHead = 0;
+  var currentCps = 12;
+  var editingText = false;
+  var dragState = null;
+  var cpsAdjusting = false;
+
+  var HEAD_BACK_THRESHOLD = 0.15;
+  var AUTOSCROLL_MARGIN = 60;
+
+  function setHint(msg) {
+    editorHint.textContent = msg || '';
+  }
+
+  function currentClipIndex() {
+    return clipAt(subs, headTime);
+  }
+
+  function renderRuler(widthPx, total) {
+    ruler.innerHTML = '';
+    ruler.style.width = widthPx + 'px';
+    var secs = Math.ceil(total);
+    var frag = document.createDocumentFragment();
+    for (var s = 0; s <= secs; s++) {
+      var tick = document.createElement('div');
+      tick.className = 'ruler-tick';
+      tick.style.left = (s * PX_PER_SEC) + 'px';
+      tick.textContent = s + 's';
+      frag.appendChild(tick);
+    }
+    ruler.appendChild(frag);
+  }
+
+  function updateCurrentHighlight() {
+    var idx = currentClipIndex();
+    var clipEls = clipsTrack.children;
+    for (var i = 0; i < clipEls.length; i++) {
+      clipEls[i].classList.toggle('current', i === idx);
+    }
+  }
+
+  function updatePlayheadPosition() {
+    playhead.style.transform = 'translateX(' + (headTime * PX_PER_SEC) + 'px)';
+    timeDisplay.textContent = formatClock(headTime) + ' / ' + formatClock(totalDuration(subs));
+  }
+
+  function renderPreview() {
+    if (editingText) return;
+    var idx = currentClipIndex();
+    previewBox.innerHTML = '';
+    var div = document.createElement('div');
+    div.className = 'preview-text';
+    div.dir = 'rtl';
+    div.textContent = idx === -1 ? '' : subs[idx].text;
+    previewBox.appendChild(div);
+  }
+
+  // 再生ヘッド関連(位置・時刻表示・現在クリップ強調・プレビュー)をまとめて更新する。
+  function refreshPlayheadUI() {
+    updatePlayheadPosition();
+    updateCurrentHighlight();
+    renderPreview();
+  }
+
+  // 尺のみが変わった場合(ドラッグ中)の軽量更新。クリップDOM要素は再生成しない
+  // (pointer capture がハンドル要素に紐づいているため、破棄すると以後のドラッグが効かなくなる)。
+  function relayout() {
+    var total = totalDuration(subs);
+    var widthPx = Math.max(total * PX_PER_SEC, 1);
+    timelineInner.style.width = widthPx + 'px';
+    clipsTrack.style.width = widthPx + 'px';
+    renderRuler(widthPx, total);
+    var clipEls = clipsTrack.children;
+    for (var i = 0; i < subs.length; i++) {
+      clipEls[i].style.width = (subs[i].dur * PX_PER_SEC) + 'px';
+      clipEls[i].querySelector('.clip-dur').textContent = subs[i].dur.toFixed(1) + 's';
+      clipEls[i].classList.toggle('edited', subs[i].edited);
+    }
+    refreshPlayheadUI();
+  }
+
+  // 構造(枚数・テキスト)が変わった場合のフル再構築。
+  function renderTimeline() {
+    var total = totalDuration(subs);
+    var widthPx = Math.max(total * PX_PER_SEC, 1);
+    timelineInner.style.width = widthPx + 'px';
+    clipsTrack.style.width = widthPx + 'px';
+    renderRuler(widthPx, total);
+
+    clipsTrack.innerHTML = '';
+    var starts = computeStarts(subs);
+    var frag = document.createDocumentFragment();
+
+    subs.forEach(function (sub, index) {
+      var clip = document.createElement('div');
+      clip.className = 'clip' + (sub.edited ? ' edited' : '');
+      clip.style.width = (sub.dur * PX_PER_SEC) + 'px';
+
+      var textDiv = document.createElement('div');
+      textDiv.className = 'clip-text';
+      textDiv.dir = 'rtl';
+      textDiv.textContent = sub.text.replace(/\n/g, ' ');
+
+      var durDiv = document.createElement('div');
+      durDiv.className = 'clip-dur';
+      durDiv.textContent = sub.dur.toFixed(1) + 's';
+
+      var handle = document.createElement('div');
+      handle.className = 'clip-handle';
+
+      clip.appendChild(textDiv);
+      clip.appendChild(durDiv);
+      clip.appendChild(handle);
+      frag.appendChild(clip);
+
+      handle.addEventListener('pointerdown', function (e) {
+        e.stopPropagation();
+        e.preventDefault();
+        try { handle.setPointerCapture(e.pointerId); } catch (err) { /* キャプチャ失敗時もハンドル上でのドラッグ自体は継続できる */ }
+        history = pushHistory(history, subs);
+        dragState = { index: index, startX: e.clientX, startDur: subs[index].dur };
+      });
+      handle.addEventListener('pointermove', function (e) {
+        if (!dragState || dragState.index !== index) return;
+        var deltaSec = (e.clientX - dragState.startX) / PX_PER_SEC;
+        subs = setClipDuration(subs, index, dragState.startDur + deltaSec);
+        relayout();
+      });
+      handle.addEventListener('pointerup', function (e) {
+        if (!dragState || dragState.index !== index) return;
+        try { handle.releasePointerCapture(e.pointerId); } catch (err) { /* 未キャプチャの場合は何もしない */ }
+        dragState = null;
+      });
+      clip.addEventListener('click', function (e) {
+        var rect = clip.getBoundingClientRect();
+        var offsetX = e.clientX - rect.left;
+        seekTo(starts[index] + offsetX / PX_PER_SEC);
+      });
+    });
+
+    clipsTrack.appendChild(frag);
+    updateDownloadEditorState();
+    refreshPlayheadUI();
+  }
+
+  function updateDownloadEditorState() {
+    downloadEditorBtn.disabled = subs.length === 0;
+  }
+
+  function autoScrollToPlayhead() {
+    var x = headTime * PX_PER_SEC;
+    var viewLeft = timelineWrap.scrollLeft;
+    var viewWidth = timelineWrap.clientWidth;
+    if (x > viewLeft + viewWidth - AUTOSCROLL_MARGIN) {
+      timelineWrap.scrollLeft = x - viewWidth + AUTOSCROLL_MARGIN;
+    } else if (x < viewLeft + AUTOSCROLL_MARGIN) {
+      timelineWrap.scrollLeft = Math.max(0, x - AUTOSCROLL_MARGIN);
+    }
+  }
+
+  function seekTo(t) {
+    var total = totalDuration(subs);
+    headTime = Math.max(0, Math.min(total, t));
+    refreshPlayheadUI();
+    autoScrollToPlayhead();
+  }
+
+  function updatePlayPauseIcon() {
+    playPauseBtn.textContent = playing ? '⏸' : '▶';
+  }
+
+  function stopPlayback() {
+    playing = false;
+    if (rafId !== null) cancelAnimationFrame(rafId);
+    rafId = null;
+    updatePlayPauseIcon();
+  }
+
+  function playTick(now) {
+    var elapsed = (now - playStartPerf) / 1000;
+    var total = totalDuration(subs);
+    var t = playStartHead + elapsed;
+    if (t >= total) {
+      headTime = total;
+      refreshPlayheadUI();
+      autoScrollToPlayhead();
+      stopPlayback();
+      return;
+    }
+    headTime = t;
+    refreshPlayheadUI();
+    autoScrollToPlayhead();
+    rafId = requestAnimationFrame(playTick);
+  }
+
+  function startPlayback() {
+    if (subs.length === 0) return;
+    var total = totalDuration(subs);
+    if (headTime >= total) headTime = 0;
+    playing = true;
+    playStartPerf = performance.now();
+    playStartHead = headTime;
+    updatePlayPauseIcon();
+    rafId = requestAnimationFrame(playTick);
+  }
+
+  function togglePlay() {
+    if (playing) stopPlayback(); else startPlayback();
+  }
+
+  function stepUp() {
+    var idx = currentClipIndex();
+    if (idx === -1) return;
+    var starts = computeStarts(subs);
+    if (headTime - starts[idx] > HEAD_BACK_THRESHOLD) {
+      seekTo(starts[idx]);
+    } else if (idx > 0) {
+      seekTo(starts[idx - 1]);
+    } else {
+      seekTo(0);
+    }
+  }
+
+  function stepDown() {
+    var idx = currentClipIndex();
+    if (idx === -1 || idx >= subs.length - 1) return;
+    var starts = computeStarts(subs);
+    seekTo(starts[idx + 1]);
+  }
+
+  function doTrim() {
+    var idx = currentClipIndex();
+    if (idx === -1) return;
+    history = pushHistory(history, subs);
+    var result = trimClipAtHead(subs, idx, headTime);
+    if (!result.ok) {
+      history = history.slice(0, -1);
+      setHint('これ以上短くできません（最小0.3秒）');
+      return;
+    }
+    subs = result.subs;
+    setHint('クリップをトリムしました');
+    renderTimeline();
+  }
+
+  function doMerge() {
+    var idx = currentClipIndex();
+    if (idx === -1) return;
+    history = pushHistory(history, subs);
+    var result = mergeClipAt(subs, idx);
+    if (!result.ok) {
+      history = history.slice(0, -1);
+      setHint('最後のクリップは結合できません');
+      return;
+    }
+    subs = result.subs;
+    setHint('クリップを結合しました');
+    renderTimeline();
+  }
+
+  function doDelete() {
+    var idx = currentClipIndex();
+    if (idx === -1) return;
+    history = pushHistory(history, subs);
+    var result = deleteClipAt(subs, idx);
+    subs = result.subs;
+    var total = totalDuration(subs);
+    if (headTime > total) headTime = total;
+    setHint('クリップを削除しました');
+    renderTimeline();
+  }
+
+  function doUndo() {
+    var restored = popHistory(history);
+    if (!restored) {
+      setHint('これ以上戻せません');
+      return;
+    }
+    history = restored.stack;
+    subs = restored.subs;
+    var total = totalDuration(subs);
+    if (headTime > total) headTime = total;
+    setHint('元に戻しました');
+    renderTimeline();
+  }
+
+  function startTextEdit(idx) {
+    if (idx === -1) return;
+    editingText = true;
+    var sub = subs[idx];
+    var multiline = sub.text.indexOf('\n') !== -1;
+    previewBox.innerHTML = '';
+    var el = document.createElement(multiline ? 'textarea' : 'input');
+    el.className = 'preview-input';
+    el.dir = 'rtl';
+    if (multiline) {
+      el.rows = 2;
+      el.value = sub.text;
+    } else {
+      el.type = 'text';
+      el.value = sub.text;
+    }
+    previewBox.appendChild(el);
+    el.focus();
+    el.select();
+
+    function commit() {
+      if (!editingText) return;
+      editingText = false;
+      var newText = el.value;
+      if (newText !== sub.text) {
+        history = pushHistory(history, subs);
+        var next = cloneSubs(subs);
+        next[idx].text = newText;
+        next[idx].edited = true;
+        subs = next;
+        setHint('テキストを編集しました');
+        renderTimeline();
+      } else {
+        renderPreview();
+      }
+    }
+    function cancel() {
+      editingText = false;
+      renderPreview();
+    }
+
+    el.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commit();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        cancel();
+      }
+    });
+    el.addEventListener('blur', commit);
+  }
+
+  function enterEditMode() {
+    var text = textarea.value;
+    var cps = parseFloat(cpsInput.value);
+    var lineGroups = segmentManuscript(text);
+    if (lineGroups.length === 0) return;
+
+    subs = subsFromLineGroups(lineGroups, cps);
+    currentCps = (isFinite(cps) && cps > 0) ? cps : 12;
+    history = [];
+    headTime = 0;
+    editingText = false;
+    stopPlayback();
+    mode = 'edit';
+
+    mainView.style.display = 'none';
+    editorView.style.display = '';
+    editorCps.value = String(currentCps);
+    editorCpsValue.textContent = String(currentCps);
+    setHint('');
+    renderTimeline();
+  }
+
+  function exitEditMode() {
+    var ok = window.confirm('タイムラインでの編集内容は破棄されます。よろしいですか？');
+    if (!ok) return;
+    stopPlayback();
+    mode = 'input';
+    subs = [];
+    history = [];
+    editorView.style.display = 'none';
+    mainView.style.display = '';
+  }
+
+  function downloadFromSubs() {
+    if (subs.length === 0) return;
+    var cues = subsToCues(subs);
+    var content = buildSrt(cues, bomCheckbox.checked);
+    var blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+
+    var now = new Date();
+    var fname = 'subtitles_' +
+      now.getFullYear() + pad(now.getMonth() + 1, 2) + pad(now.getDate(), 2) + '_' +
+      pad(now.getHours(), 2) + pad(now.getMinutes(), 2) + '.srt';
+
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+  }
+
+  toTimelineBtn.addEventListener('click', enterEditMode);
+  backBtn.addEventListener('click', exitEditMode);
+  playPauseBtn.addEventListener('click', togglePlay);
+  upBtn.addEventListener('click', stepUp);
+  downBtn.addEventListener('click', stepDown);
+  sBtn.addEventListener('click', doTrim);
+  mBtn.addEventListener('click', doMerge);
+  undoBtn.addEventListener('click', doUndo);
+  downloadEditorBtn.addEventListener('click', downloadFromSubs);
+
+  ruler.addEventListener('click', function (e) {
+    var rect = ruler.getBoundingClientRect();
+    var offsetX = e.clientX - rect.left;
+    seekTo(offsetX / PX_PER_SEC);
+  });
+
+  previewBox.addEventListener('dblclick', function () {
+    if (mode !== 'edit' || editingText) return;
+    if (playing) stopPlayback();
+    startTextEdit(currentClipIndex());
+  });
+
+  editorCps.addEventListener('input', function () {
+    if (!cpsAdjusting) {
+      cpsAdjusting = true;
+      history = pushHistory(history, subs);
+    }
+    currentCps = parseFloat(editorCps.value);
+    editorCpsValue.textContent = String(currentCps);
+    subs = recalcUneditedDurations(subs, currentCps);
+    var total = totalDuration(subs);
+    if (headTime > total) headTime = total;
+    renderTimeline();
+  });
+  editorCps.addEventListener('change', function () {
+    cpsAdjusting = false;
+    setHint('読み速度を変更しました（編集済みクリップは変更されません）');
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (mode !== 'edit' || editingText) return;
+    if (e.key === ' ' || e.code === 'Space') {
+      e.preventDefault();
+      togglePlay();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      stepUp();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      stepDown();
+    } else if (e.key === 's' || e.key === 'S') {
+      doTrim();
+    } else if (e.key === 'm' || e.key === 'M') {
+      doMerge();
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      doDelete();
+    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      doUndo();
+    }
+  });
 
   render();
 })();

@@ -34,7 +34,13 @@ var lib = new Function(
   pureLogicSource +
   '\nreturn { segmentManuscript: segmentManuscript, buildCues: buildCues, ' +
   'formatSrtTime: formatSrtTime, formatTotalDuration: formatTotalDuration, ' +
-  'buildSrt: buildSrt };'
+  'buildSrt: buildSrt, subsFromLineGroups: subsFromLineGroups, ' +
+  'computeStarts: computeStarts, totalDuration: totalDuration, clipAt: clipAt, ' +
+  'setClipDuration: setClipDuration, trimClipAtHead: trimClipAtHead, ' +
+  'mergeClipAt: mergeClipAt, deleteClipAt: deleteClipAt, ' +
+  'recalcUneditedDurations: recalcUneditedDurations, subsToCues: subsToCues, ' +
+  'pushHistory: pushHistory, popHistory: popHistory, charCountForText: charCountForText, ' +
+  'formatClock: formatClock };'
 )();
 
 var segmentManuscript = lib.segmentManuscript;
@@ -42,6 +48,20 @@ var buildCues = lib.buildCues;
 var formatSrtTime = lib.formatSrtTime;
 var formatTotalDuration = lib.formatTotalDuration;
 var buildSrt = lib.buildSrt;
+var subsFromLineGroups = lib.subsFromLineGroups;
+var computeStarts = lib.computeStarts;
+var totalDuration = lib.totalDuration;
+var clipAt = lib.clipAt;
+var setClipDuration = lib.setClipDuration;
+var trimClipAtHead = lib.trimClipAtHead;
+var mergeClipAt = lib.mergeClipAt;
+var deleteClipAt = lib.deleteClipAt;
+var recalcUneditedDurations = lib.recalcUneditedDurations;
+var subsToCues = lib.subsToCues;
+var pushHistory = lib.pushHistory;
+var popHistory = lib.popHistory;
+var charCountForText = lib.charCountForText;
+var formatClock = lib.formatClock;
 
 var passCount = 0;
 var failCount = 0;
@@ -167,6 +187,182 @@ function assert(cond, msg) {
 
   var srtWithBom = buildSrt(cues, true);
   assert(srtWithBom.charCodeAt(0) === 0xfeff, 'BOM指定時は先頭にU+FEFFが付く');
+})();
+
+// --- srtgen-timeline-spec.md 第7節 受け入れテスト ---
+
+function makeSubs(durs) {
+  return durs.map(function (d, i) {
+    return { text: 'text' + i, dur: d, edited: false };
+  });
+}
+
+// 1: リップル。2番目を3.0に変更 -> 開始時刻が [0, 1.0, 4.0]
+(function () {
+  var subs = makeSubs([1.0, 2.0, 1.5]);
+  subs = setClipDuration(subs, 1, 3.0);
+  var starts = computeStarts(subs);
+  assert(
+    starts[0] === 0 && starts[1] === 1.0 && starts[2] === 4.0,
+    '#T1 リップルで開始時刻が [0, 1.0, 4.0] になる -> ' + JSON.stringify(starts)
+  );
+})();
+
+// 2: トリム。開始1.0秒・尺2.0秒のクリップにヘッド2.4秒でS -> 尺1.4秒
+(function () {
+  var subs = makeSubs([1.0, 2.0, 1.5]); // index1の開始は1.0秒
+  var result = trimClipAtHead(subs, 1, 2.4);
+  assert(result.ok, '#T2 トリムが成功する');
+  assert(result.subs[1].dur === 1.4, '#T2 尺が1.4秒になる -> ' + result.subs[1].dur);
+})();
+
+// 3: トリム下限。結果が0.3未満になるSは拒否され状態不変
+(function () {
+  var subs = makeSubs([1.0, 2.0, 1.5]);
+  var result = trimClipAtHead(subs, 1, 1.1); // 1.1-1.0=0.1秒 < 0.3
+  assert(result.ok === false, '#T3 0.3秒未満のトリムは拒否される');
+  assert(result.subs === subs, '#T3 拒否時は元の配列そのままが返る(状態不変)');
+})();
+
+// 4: 結合。テキストがスペース連結、尺が合算、配列長が1減る
+(function () {
+  var subs = makeSubs([1.0, 2.0, 1.5]);
+  subs[0].text = 'مرحبا';
+  subs[1].text = 'بك';
+  var result = mergeClipAt(subs, 0);
+  assert(result.ok, '#T4 結合が成功する');
+  assert(result.subs.length === 2, '#T4 配列長が1減る');
+  assert(result.subs[0].text === 'مرحبا بك', '#T4 テキストがスペース連結される -> "' + result.subs[0].text + '"');
+  assert(result.subs[0].dur === 3.0, '#T4 尺が合算される -> ' + result.subs[0].dur);
+  assert(result.subs[0].edited === true, '#T4 結合後のクリップはedited:trueになる');
+})();
+
+// 4b: 結合。最終クリップでは拒否される
+(function () {
+  var subs = makeSubs([1.0, 2.0, 1.5]);
+  var result = mergeClipAt(subs, 2);
+  assert(result.ok === false, '#T4b 最終クリップの結合は拒否される');
+})();
+
+// 5: 削除。配列長が1減り、後続の開始時刻が繰り上がる
+(function () {
+  var subs = makeSubs([1.0, 2.0, 1.5]);
+  var result = deleteClipAt(subs, 0);
+  assert(result.ok, '#T5 削除が成功する');
+  assert(result.subs.length === 2, '#T5 配列長が1減る');
+  var starts = computeStarts(result.subs);
+  assert(starts[0] === 0 && starts[1] === 2.0, '#T5 後続の開始時刻が繰り上がる -> ' + JSON.stringify(starts));
+})();
+
+// 6: SRT出力の累積丸め。誤差が出やすいdur列でも完全一致・ギャップ0
+(function () {
+  var subs = makeSubs([0.1, 0.2, 0.3]);
+  var cues = subsToCues(subs);
+  assert(cues[0].startMs === 0 && cues[0].endMs === 100, '#T6 1枚目 0->100ms -> ' + JSON.stringify(cues[0]));
+  assert(cues[1].startMs === 100 && cues[1].endMs === 300, '#T6 2枚目 100->300ms -> ' + JSON.stringify(cues[1]));
+  assert(cues[2].startMs === 300 && cues[2].endMs === 600, '#T6 3枚目 300->600ms -> ' + JSON.stringify(cues[2]));
+
+  var gapOk = true;
+  for (var i = 1; i < cues.length; i++) {
+    if (cues[i].startMs !== cues[i - 1].endMs) { gapOk = false; break; }
+  }
+  assert(gapOk, '#T6 全区間でギャップ0');
+
+  var srt = buildSrt(cues, false);
+  assert(srt.indexOf('00:00:00,100 --> 00:00:00,300') !== -1, '#T6 タイムコードがms単位で正確 -> ' + srt);
+})();
+
+// 7: Undo。任意の操作後にUndoで直前の状態へ完全復元
+(function () {
+  var subs = makeSubs([1.0, 2.0, 1.5]);
+  var history = [];
+  var before = JSON.parse(JSON.stringify(subs));
+
+  history = pushHistory(history, subs);
+  subs = setClipDuration(subs, 1, 3.0);
+  assert(JSON.stringify(subs) !== JSON.stringify(before), '#T7 操作後は状態が変化している');
+
+  var restored = popHistory(history);
+  assert(restored !== null, '#T7 popHistoryが履歴を返す');
+  assert(JSON.stringify(restored.subs) === JSON.stringify(before), '#T7 Undoで直前の状態に完全復元する');
+  assert(restored.stack.length === 0, '#T7 復元後は履歴が1件消費される');
+})();
+
+// 7b: Undo履歴は上限50件(古いものから破棄される)
+(function () {
+  var history = [];
+  for (var i = 0; i < 55; i++) {
+    history = pushHistory(history, makeSubs([i + 1]));
+  }
+  assert(history.length === 50, '#T7b 履歴は50件が上限 -> ' + history.length);
+  assert(history[0][0].dur === 6, '#T7b 古い履歴(6件目未満)は破棄されている -> ' + history[0][0].dur);
+})();
+
+// --- 追加要件: edited フラグと cps 再計算 ---
+
+// (a) cps変更で edited:false のみ再計算され、edited は不変
+(function () {
+  var subs = [
+    { text: 'أ'.repeat(12), dur: 1.0, edited: false },
+    { text: 'ب'.repeat(12), dur: 5.0, edited: true }
+  ];
+  var next = recalcUneditedDurations(subs, 12);
+  assert(next[0].dur === 1.0, '#A1 unedited(cps=12,12文字)は再計算後も1.0秒 -> ' + next[0].dur);
+  assert(next[0].edited === false, '#A1 unedited のeditedはfalseのまま');
+  assert(next[1].dur === 5.0, '#A1 edited:trueのクリップは尺が変更されない -> ' + next[1].dur);
+  assert(next[1].edited === true, '#A1 edited:trueのクリップのeditedは不変');
+
+  var next2 = recalcUneditedDurations(subs, 6);
+  assert(next2[0].dur === 2.0, '#A1 cps=6に変更するとunedited(12文字)は2.0秒に再計算される -> ' + next2[0].dur);
+  assert(next2[1].dur === 5.0, '#A1 edited:trueは再計算対象外(cps=6でも変化なし)');
+})();
+
+// (b) cps変更 -> Undoで復元される
+(function () {
+  var subs = [
+    { text: 'أ'.repeat(12), dur: 1.0, edited: false }
+  ];
+  var history = [];
+  var before = JSON.parse(JSON.stringify(subs));
+
+  history = pushHistory(history, subs);
+  subs = recalcUneditedDurations(subs, 6);
+  assert(subs[0].dur === 2.0, '#A2 cps変更で再計算される');
+
+  var restored = popHistory(history);
+  assert(JSON.stringify(restored.subs) === JSON.stringify(before), '#A2 Undoでcps変更前の状態に復元される');
+})();
+
+// setClipDuration / trimClipAtHead は対象クリップの edited を true にする
+(function () {
+  var subs = makeSubs([1.0, 2.0, 1.5]);
+  var afterDrag = setClipDuration(subs, 0, 1.2);
+  assert(afterDrag[0].edited === true, '#A3 ドラッグ(setClipDuration)後はedited:trueになる');
+
+  var afterTrim = trimClipAtHead(subs, 1, 2.4);
+  assert(afterTrim.subs[1].edited === true, '#A3 S(トリム)後はedited:trueになる');
+})();
+
+// deleteClipAt は残存クリップの edited フラグに影響しない
+(function () {
+  var subs = [
+    { text: 'a', dur: 1.0, edited: true },
+    { text: 'b', dur: 1.0, edited: false },
+    { text: 'c', dur: 1.0, edited: true }
+  ];
+  var result = deleteClipAt(subs, 0);
+  assert(result.subs[0].edited === false, '#A4 削除後も残存クリップのeditedは不変(1) -> ' + result.subs[0].edited);
+  assert(result.subs[1].edited === true, '#A4 削除後も残存クリップのeditedは不変(2) -> ' + result.subs[1].edited);
+})();
+
+// subsFromLineGroups: 生成時は全クリップ edited:false、dur は0.1丸め・最小0.3クランプ
+(function () {
+  var subs = subsFromLineGroups([['أ'], ['أأأأأأأأأأأأأأأأأأأأأأأأ']], 12); // 1文字 / 24文字
+  assert(subs[0].edited === false && subs[1].edited === false, '#A5 生成時は全クリップedited:false');
+  assert(subs[0].dur === MIN_DUR_FOR_TEST(), '#A5 1文字/12cps=0.083..秒は最小0.3秒にクランプされる -> ' + subs[0].dur);
+  assert(subs[1].dur === 2.0, '#A5 24文字/12cps=2.0秒はそのまま(0.1刻み) -> ' + subs[1].dur);
+
+  function MIN_DUR_FOR_TEST() { return 0.3; }
 })();
 
 console.log('');
