@@ -11,12 +11,15 @@
     return DELETE_CHARS.has(ch) || KEEP_CHARS.has(ch);
   }
 
-  // 原稿テキストを「字幕ごとの行配列」の配列に分割する。
+  // 原稿テキストを「字幕セグメント({lines, delim})」の配列に分割する。
+  // delim: この字幕の直後で除去された区切り文字(削除系のみ)。連続区切りに
+  // 「残す」系の文字が1つでも含まれる場合、本文側に既に存在するため delim は
+  // 空文字にする(二重出力防止)。末尾セグメント(区切りなしで終わる)は delim=''。
   // 許可される加工は: 区切り文字(削除系)の削除 / 各行の前後トリム / 改行による2行字幕化 のみ。
   function segmentManuscript(text) {
     var chars = Array.from(text);
     var n = chars.length;
-    var rawSubtitles = [];
+    var rawSegments = [];
     var currentLine = '';
     var currentLines = [];
     var i = 0;
@@ -38,13 +41,20 @@
 
       if (isDelimiter(ch)) {
         var keepBuffer = '';
+        var deleteBuffer = '';
+        var hasKeep = false;
         while (i < n && isDelimiter(chars[i])) {
-          if (KEEP_CHARS.has(chars[i])) keepBuffer += chars[i];
+          if (KEEP_CHARS.has(chars[i])) {
+            keepBuffer += chars[i];
+            hasKeep = true;
+          } else {
+            deleteBuffer += chars[i];
+          }
           i++;
         }
         currentLine += keepBuffer;
         currentLines.push(currentLine);
-        rawSubtitles.push(currentLines);
+        rawSegments.push({ lines: currentLines, delim: hasKeep ? '' : deleteBuffer });
         currentLine = '';
         currentLines = [];
         continue;
@@ -55,27 +65,29 @@
     }
 
     currentLines.push(currentLine);
-    rawSubtitles.push(currentLines);
+    rawSegments.push({ lines: currentLines, delim: '' });
 
-    var subtitles = [];
-    for (var s = 0; s < rawSubtitles.length; s++) {
+    var segments = [];
+    for (var s = 0; s < rawSegments.length; s++) {
       var trimmed = [];
-      for (var l = 0; l < rawSubtitles[s].length; l++) {
-        var t = rawSubtitles[s][l].trim();
+      for (var l = 0; l < rawSegments[s].lines.length; l++) {
+        var t = rawSegments[s].lines[l].trim();
         if (t.length > 0) trimmed.push(t);
       }
-      if (trimmed.length > 0) subtitles.push(trimmed);
+      if (trimmed.length > 0) segments.push({ lines: trimmed, delim: rawSegments[s].delim });
     }
-    return subtitles;
+    return segments;
   }
 
-  // 累積丸め方式でキュー（連番・開始/終了ms・行・文字数）を構築する。
-  function buildCues(lineGroups, cps) {
+  // 累積丸め方式でキュー（連番・開始/終了ms・行・文字数）を構築する。入力モードの
+  // ライブプレビュー専用。cpsは連続値のため、ここは従来どおり秒(浮動小数)で
+  // 累積してからMath.roundでms化する(累積誤差を出さない既存方式を踏襲)。
+  function buildCues(segments, cps) {
     var rate = (isFinite(cps) && cps > 0) ? cps : 12;
     var accSeconds = 0;
     var cues = [];
-    for (var idx = 0; idx < lineGroups.length; idx++) {
-      var lines = lineGroups[idx];
+    for (var idx = 0; idx < segments.length; idx++) {
+      var lines = segments[idx].lines;
       var charCount = 0;
       for (var l = 0; l < lines.length; l++) charCount += Array.from(lines[l]).length;
       var duration = charCount / rate;
@@ -128,25 +140,17 @@
 
   // ================= タイムライン編集モード: 純粋ロジック =================
   //
-  // 内部の時間計算はすべて「デシ秒（0.1秒単位の整数）」で行う。
-  // sub.dur 自体は秒(浮動小数)で保持するが、累積・比較・SRTのms変換は
-  // 必ず toDs() で整数化してから行うため、0.1+0.2!==0.3 のような
-  // 浮動小数の誤差が積み上がることがない。
+  // 内部の時間計算はすべて「ミリ秒の整数」で行う。dur自体もdurMsという
+  // 整数msフィールドとして保持し、浮動小数は一切経由しない(累積誤差ゼロ)。
 
-  var MIN_DUR = 0.3; // 秒
-  var PX_PER_SEC = 80;
+  var MIN_DUR_MS = 300;
+  var ZOOM_LEVELS = [20, 35, 50, 75, 100, 150, 200, 300, 400];
+  var DEFAULT_ZOOM_INDEX = ZOOM_LEVELS.indexOf(75); // 現行(80px/sec)に最も近い段
+  var STORAGE_KEY = 'srtgen:session:v1';
+  var SCHEMA_VERSION = 1;
 
-  function toDs(seconds) {
-    return Math.round(seconds * 10);
-  }
-  function dsToSeconds(ds) {
-    return ds / 10;
-  }
-  function round1(seconds) {
-    return dsToSeconds(toDs(seconds));
-  }
-  function clampDur(seconds) {
-    return Math.max(MIN_DUR, round1(seconds));
+  function clampDurMs(ms) {
+    return Math.max(MIN_DUR_MS, Math.round(ms));
   }
 
   // 改行を除き、スペース込み・コードポイント単位で文字数を数える(既存の cps 計算方式と同一)。
@@ -157,54 +161,57 @@
     return count;
   }
 
-  // 生成: 既存の分割ロジック(lineGroups)から編集モード用の subs を組み立てる。
-  // dur は 0.1丸め・最小0.3秒クランプ。全クリップ edited:false。
-  function subsFromLineGroups(lineGroups, cps) {
+  function durMsFromCps(charCount, cps) {
     var rate = (isFinite(cps) && cps > 0) ? cps : 12;
+    return clampDurMs((charCount / rate) * 1000);
+  }
+
+  // 生成: セグメント({lines,delim})から編集モード用の subs を組み立てる。
+  // durMs は cps から算出しMath.roundでms整数化・最小300msでクランプ。全クリップ edited:false。
+  function subsFromSegments(segments, cps) {
     var subs = [];
-    for (var i = 0; i < lineGroups.length; i++) {
-      var text = lineGroups[i].join('\n');
+    for (var i = 0; i < segments.length; i++) {
+      var text = segments[i].lines.join('\n');
       var charCount = charCountForText(text);
-      subs.push({ text: text, dur: clampDur(charCount / rate), edited: false });
+      subs.push({
+        text: text,
+        durMs: durMsFromCps(charCount, cps),
+        edited: false,
+        delim: segments[i].delim
+      });
     }
     return subs;
   }
 
-  // 各クリップの開始時刻をデシ秒の整数配列で返す(累積誤差なし)。
-  function computeStartsDs(subs) {
+  // 各クリップの開始時刻をミリ秒の整数配列で返す(累積誤差なし)。
+  function computeStartsMs(subs) {
     var starts = [];
     var acc = 0;
     for (var i = 0; i < subs.length; i++) {
       starts.push(acc);
-      acc += toDs(subs[i].dur);
+      acc += subs[i].durMs;
     }
     return starts;
   }
-  function computeStarts(subs) {
-    return computeStartsDs(subs).map(dsToSeconds);
-  }
-  function totalDurationDs(subs) {
+  function totalDurationMs(subs) {
     var acc = 0;
-    for (var i = 0; i < subs.length; i++) acc += toDs(subs[i].dur);
+    for (var i = 0; i < subs.length; i++) acc += subs[i].durMs;
     return acc;
   }
-  function totalDuration(subs) {
-    return dsToSeconds(totalDurationDs(subs));
-  }
 
-  // 時刻 t(秒, 連続値)が属するクリップのindexを返す。tはデシ秒に丸めてから
+  // 時刻 tMs(連続値でも可)が属するクリップのindexを返す。整数msに丸めてから
   // 整数のみで比較するため、境界判定に浮動小数の誤差が入らない。
-  function clipAt(subs, t) {
+  function clipAt(subs, tMs) {
     var n = subs.length;
     if (n === 0) return -1;
-    var startsDs = computeStartsDs(subs);
-    var totalDs = totalDurationDs(subs);
-    var tDs = Math.round(t * 10);
-    if (tDs <= 0) return 0;
-    if (tDs >= totalDs) return n - 1;
+    var starts = computeStartsMs(subs);
+    var total = totalDurationMs(subs);
+    var t = Math.round(tMs);
+    if (t <= 0) return 0;
+    if (t >= total) return n - 1;
     for (var i = 0; i < n; i++) {
-      var endDs = (i < n - 1) ? startsDs[i + 1] : totalDs;
-      if (tDs < endDs) return i;
+      var end = (i < n - 1) ? starts[i + 1] : total;
+      if (t < end) return i;
     }
     return n - 1;
   }
@@ -212,34 +219,36 @@
   function cloneSubs(subs) {
     var out = [];
     for (var i = 0; i < subs.length; i++) {
-      out.push({ text: subs[i].text, dur: subs[i].dur, edited: subs[i].edited });
+      out.push({ text: subs[i].text, durMs: subs[i].durMs, edited: subs[i].edited, delim: subs[i].delim });
     }
     return out;
   }
 
-  // ドラッグ等による尺の直接指定。常に成功し、0.1丸め・最小0.3秒でクランプする。
-  function setClipDuration(subs, index, rawDurSeconds) {
+  // ドラッグ等による尺の直接指定。px→msから算出した値を1ms単位に丸めるのみで、
+  // 人為的なスナップ(0.1秒刻み等)は入れない。常に成功し、最小300msでクランプする。
+  function setClipDuration(subs, index, rawMs) {
     var next = cloneSubs(subs);
-    next[index].dur = clampDur(rawDurSeconds);
+    next[index].durMs = clampDurMs(rawMs);
     next[index].edited = true;
     return next;
   }
 
-  // S: ヘッドが乗っているクリップの尺を (headTime - クリップ開始時刻) に変更する。
-  // 結果が最小尺(0.3秒)未満なら拒否して元の配列を返す。
-  function trimClipAtHead(subs, index, headTime) {
-    var startsDs = computeStartsDs(subs);
-    var newDurDs = Math.round(headTime * 10) - startsDs[index];
-    if (newDurDs < toDs(MIN_DUR)) {
+  // S: ヘッドが乗っているクリップの尺を (ヘッドms − クリップ開始ms) に変更する。
+  // 結果が最小尺(300ms)未満なら拒否して元の配列を返す。テキストは変更しない。
+  function trimClipAtHead(subs, index, headMs) {
+    var starts = computeStartsMs(subs);
+    var newDur = Math.round(headMs) - starts[index];
+    if (newDur < MIN_DUR_MS) {
       return { ok: false, subs: subs };
     }
     var next = cloneSubs(subs);
-    next[index].dur = dsToSeconds(newDurDs);
+    next[index].durMs = newDur;
     next[index].edited = true;
     return { ok: true, subs: next };
   }
 
   // M: index番目と右隣(index+1)を結合する。テキストは半角スペース連結、尺は合算。
+  // delimは左クリップのものを破棄し、右クリップのものを引き継ぐ。
   // 最終クリップ(右隣が存在しない)なら拒否。
   function mergeClipAt(subs, index) {
     if (index < 0 || index >= subs.length - 1) {
@@ -248,8 +257,12 @@
     var next = cloneSubs(subs);
     var a = next[index];
     var b = next[index + 1];
-    var mergedDurDs = toDs(a.dur) + toDs(b.dur);
-    var merged = { text: a.text + ' ' + b.text, dur: dsToSeconds(mergedDurDs), edited: true };
+    var merged = {
+      text: a.text + ' ' + b.text,
+      durMs: a.durMs + b.durMs,
+      edited: true,
+      delim: b.delim
+    };
     next.splice(index, 2, merged);
     return { ok: true, subs: next };
   }
@@ -264,29 +277,39 @@
     return { ok: true, subs: next };
   }
 
-  // cps変更: edited:false のクリップのみ、自身のテキストの文字数から尺を再計算する。
+  // cps変更: edited:false のクリップのみ、自身のテキストの文字数から尺(ms)を再計算する。
   // edited:true のクリップは一切変更しない。
   function recalcUneditedDurations(subs, cps) {
-    var rate = (isFinite(cps) && cps > 0) ? cps : 12;
     return subs.map(function (sub) {
       if (sub.edited) return sub;
       var charCount = charCountForText(sub.text);
-      return { text: sub.text, dur: clampDur(charCount / rate), edited: false };
+      return { text: sub.text, durMs: durMsFromCps(charCount, cps), edited: false, delim: sub.delim };
     });
   }
 
-  // SRT出力用のcues生成。dur は必ず0.1刻みのため、デシ秒の整数累積は
-  // Math.round(累積秒×1000) と数学的に完全に一致し、かつ浮動小数誤差が一切入らない。
+  // SRT出力用のcues生成。durMsは既に整数msのため、累積は常に厳密(丸め不要)。
   function subsToCues(subs) {
     var cues = [];
-    var accDs = 0;
+    var acc = 0;
     for (var i = 0; i < subs.length; i++) {
-      var startMs = accDs * 100;
-      accDs += toDs(subs[i].dur);
-      var endMs = accDs * 100;
+      var startMs = acc;
+      acc += subs[i].durMs;
+      var endMs = acc;
       cues.push({ index: i + 1, lines: subs[i].text.split('\n'), startMs: startMs, endMs: endMs });
     }
     return cues;
+  }
+
+  // 原稿への書き戻し: 各クリップの本文+delimを結合し、改行区切りで連結する。
+  // 区切りなしで削除された部分の後にも \n を挿入するが、再パース時に
+  // 空行として除去されるため分割結果には影響しない。
+  function reconstructManuscript(subs) {
+    return subs.map(function (s) { return s.text + s.delim; }).join('\n');
+  }
+
+  // 文字列の完全一致判定(コードポイント単位。正規化はしない)。
+  function textEquals(a, b) {
+    return Array.from(a).join('') === Array.from(b).join('');
   }
 
   // Undo: 操作前の subs のディープコピーをスタックにpushする。上限50件(古いものから破棄)。
@@ -304,14 +327,84 @@
     return { stack: next, subs: subs };
   }
 
-  function formatClock(seconds) {
-    seconds = Math.max(0, seconds);
-    var totalDs = Math.round(seconds * 10);
-    var m = Math.floor(totalDs / 600);
-    var rem = totalDs - m * 600;
+  // M:SS.d 形式(0.1秒単位)。表示専用でmsを保持したまま整数演算で丸める。
+  function formatClock(ms) {
+    ms = Math.max(0, Math.round(ms));
+    var totalTenths = Math.round(ms / 100);
+    var m = Math.floor(totalTenths / 600);
+    var rem = totalTenths - m * 600;
     var s = Math.floor(rem / 10);
     var d = rem % 10;
     return m + ':' + pad(s, 2) + '.' + d;
+  }
+
+  // ---- ズーム(表示倍率)。尺・時刻・SRT出力には一切影響しない、純粋に表示用の変換 ----
+  function clampZoomIndex(index) {
+    return Math.max(0, Math.min(ZOOM_LEVELS.length - 1, index));
+  }
+  function msToPx(ms, pxPerSec) {
+    return (ms / 1000) * pxPerSec;
+  }
+  function pxToMs(px, pxPerSec) {
+    return (px / pxPerSec) * 1000;
+  }
+  // ルーラーの目盛り間隔(秒)を、ラベルが重ならない最小間隔から選ぶ。
+  var TICK_CANDIDATES_SEC = [0.1, 0.5, 1, 2, 5];
+  var MIN_TICK_LABEL_SPACING_PX = 40;
+  function pickTickIntervalSec(pxPerSec) {
+    for (var i = 0; i < TICK_CANDIDATES_SEC.length; i++) {
+      if (TICK_CANDIDATES_SEC[i] * pxPerSec >= MIN_TICK_LABEL_SPACING_PX) return TICK_CANDIDATES_SEC[i];
+    }
+    return TICK_CANDIDATES_SEC[TICK_CANDIDATES_SEC.length - 1];
+  }
+
+  // ---- localStorage 永続化: スキーマ検証とシリアライズ(DOMに依存しない純粋部分) ----
+  function isValidSessionData(data) {
+    if (!data || typeof data !== 'object') return false;
+    if (data.version !== SCHEMA_VERSION) return false;
+    if (typeof data.manuscript !== 'string') return false;
+    if (typeof data.cps !== 'number' || !isFinite(data.cps)) return false;
+    if (typeof data.bom !== 'boolean') return false;
+    if (data.mode !== 'input' && data.mode !== 'edit') return false;
+    if (!Array.isArray(data.clips)) return false;
+    for (var i = 0; i < data.clips.length; i++) {
+      var c = data.clips[i];
+      if (!c || typeof c !== 'object') return false;
+      if (typeof c.text !== 'string') return false;
+      if (typeof c.durMs !== 'number' || !isFinite(c.durMs)) return false;
+      if (typeof c.delim !== 'string') return false;
+      if (typeof c.edited !== 'boolean') return false;
+    }
+    if (typeof data.zoomIndex !== 'number' || data.zoomIndex < 0 || data.zoomIndex >= ZOOM_LEVELS.length) return false;
+    if (typeof data.headTimeMs !== 'number' || !isFinite(data.headTimeMs)) return false;
+    return true;
+  }
+
+  function serializeSession(state) {
+    return JSON.stringify({
+      version: SCHEMA_VERSION,
+      manuscript: state.manuscript,
+      cps: state.cps,
+      bom: state.bom,
+      mode: state.mode,
+      clips: state.clips.map(function (c) {
+        return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited };
+      }),
+      zoomIndex: state.zoomIndex,
+      headTimeMs: Math.round(state.headTimeMs)
+    });
+  }
+
+  // JSON.parse失敗・バージョン不一致・想定外の構造の場合は例外を投げず null を返す。
+  function deserializeSession(raw) {
+    var data;
+    try {
+      data = JSON.parse(raw);
+    } catch (err) {
+      return null;
+    }
+    if (!isValidSessionData(data)) return null;
+    return data;
   }
 
   // ---- DOM wiring ----
@@ -324,6 +417,8 @@
   var emptyState = document.getElementById('emptyState');
   var statCount = document.getElementById('statCount');
   var statDuration = document.getElementById('statDuration');
+  var restoreBanner = document.getElementById('restoreBanner');
+  var newSessionBtn = document.getElementById('newSessionBtn');
 
   var currentCues = [];
 
@@ -363,8 +458,8 @@
   function render() {
     var text = textarea.value;
     var cps = parseFloat(cpsInput.value);
-    var lineGroups = segmentManuscript(text);
-    currentCues = buildCues(lineGroups, cps);
+    var segments = segmentManuscript(text);
+    currentCues = buildCues(segments, cps);
 
     previewList.innerHTML = '';
     if (currentCues.length === 0) {
@@ -408,10 +503,6 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
 
-  textarea.addEventListener('input', render);
-  cpsInput.addEventListener('input', render);
-  downloadBtn.addEventListener('click', download);
-
   // ================= タイムライン編集モード: DOM wiring =================
 
   var mainView = document.getElementById('mainView');
@@ -437,38 +528,116 @@
 
   var mode = 'input'; // 'input' | 'edit'
   var subs = [];
+  var hasTimelineState = false; // 一度でもタイムラインを生成/復元したか
   var history = [];
-  var headTime = 0;
+  var headTimeMs = 0;
   var playing = false;
   var rafId = null;
   var playStartPerf = 0;
-  var playStartHead = 0;
+  var playStartHeadMs = 0;
   var currentCps = 12;
   var editingText = false;
   var dragState = null;
   var cpsAdjusting = false;
+  var zoomIndex = DEFAULT_ZOOM_INDEX;
 
-  var HEAD_BACK_THRESHOLD = 0.15;
+  var HEAD_BACK_THRESHOLD_MS = 150;
   var AUTOSCROLL_MARGIN = 60;
+
+  function currentPxPerSec() {
+    return ZOOM_LEVELS[zoomIndex];
+  }
 
   function setHint(msg) {
     editorHint.textContent = msg || '';
   }
 
   function currentClipIndex() {
-    return clipAt(subs, headTime);
+    return clipAt(subs, headTimeMs);
   }
 
-  function renderRuler(widthPx, total) {
+  // ---- 永続化: 保存(300msデバウンス)・復元 ----
+  var saveTimer = null;
+  function scheduleSave() {
+    if (saveTimer !== null) clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      saveTimer = null;
+      persistSession();
+    }, 300);
+  }
+  function persistSession() {
+    try {
+      var raw = serializeSession({
+        manuscript: textarea.value,
+        cps: currentCps,
+        bom: bomCheckbox.checked,
+        mode: mode,
+        clips: subs,
+        zoomIndex: zoomIndex,
+        headTimeMs: headTimeMs
+      });
+      localStorage.setItem(STORAGE_KEY, raw);
+    } catch (err) {
+      // QuotaExceededError等は握りつぶす。保存に失敗してもアプリは継続動作する。
+    }
+  }
+
+  function tryRestoreFromStorage() {
+    var raw;
+    try {
+      raw = localStorage.getItem(STORAGE_KEY);
+    } catch (err) {
+      return false;
+    }
+    if (!raw) return false;
+
+    var data = deserializeSession(raw);
+    if (!data) {
+      try { localStorage.removeItem(STORAGE_KEY); } catch (err) { /* ignore */ }
+      return false;
+    }
+
+    textarea.value = data.manuscript;
+    cpsInput.value = String(data.cps);
+    bomCheckbox.checked = data.bom;
+
+    subs = data.clips.map(function (c) {
+      return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited };
+    });
+    hasTimelineState = subs.length > 0;
+    currentCps = data.cps;
+    zoomIndex = clampZoomIndex(data.zoomIndex);
+    headTimeMs = data.headTimeMs;
+    history = [];
+
+    render();
+
+    if (data.mode === 'edit' && subs.length > 0) {
+      mode = 'edit';
+      mainView.style.display = 'none';
+      editorView.style.display = '';
+      editorCps.value = String(currentCps);
+      editorCpsValue.textContent = String(currentCps);
+      renderTimeline();
+    }
+
+    return true;
+  }
+
+  function renderRuler(widthPx, totalMs) {
     ruler.innerHTML = '';
     ruler.style.width = widthPx + 'px';
-    var secs = Math.ceil(total);
+    var pxPerSec = currentPxPerSec();
+    var tickIntervalSec = pickTickIntervalSec(pxPerSec);
+    var totalSec = totalMs / 1000;
     var frag = document.createDocumentFragment();
-    for (var s = 0; s <= secs; s++) {
+    var epsilon = 1e-6;
+    for (var k = 0; k * tickIntervalSec <= totalSec + epsilon; k++) {
+      var t = k * tickIntervalSec;
       var tick = document.createElement('div');
       tick.className = 'ruler-tick';
-      tick.style.left = (s * PX_PER_SEC) + 'px';
-      tick.textContent = s + 's';
+      tick.style.left = (t * pxPerSec) + 'px';
+      tick.textContent = (tickIntervalSec < 1 ? t.toFixed(1) : String(Math.round(t))) + 's';
       frag.appendChild(tick);
     }
     ruler.appendChild(frag);
@@ -483,8 +652,8 @@
   }
 
   function updatePlayheadPosition() {
-    playhead.style.transform = 'translateX(' + (headTime * PX_PER_SEC) + 'px)';
-    timeDisplay.textContent = formatClock(headTime) + ' / ' + formatClock(totalDuration(subs));
+    playhead.style.transform = 'translateX(' + msToPx(headTimeMs, currentPxPerSec()) + 'px)';
+    timeDisplay.textContent = formatClock(headTimeMs) + ' / ' + formatClock(totalDurationMs(subs));
   }
 
   function renderPreview() {
@@ -508,15 +677,16 @@
   // 尺のみが変わった場合(ドラッグ中)の軽量更新。クリップDOM要素は再生成しない
   // (pointer capture がハンドル要素に紐づいているため、破棄すると以後のドラッグが効かなくなる)。
   function relayout() {
-    var total = totalDuration(subs);
-    var widthPx = Math.max(total * PX_PER_SEC, 1);
+    var total = totalDurationMs(subs);
+    var pxPerSec = currentPxPerSec();
+    var widthPx = Math.max(msToPx(total, pxPerSec), 1);
     timelineInner.style.width = widthPx + 'px';
     clipsTrack.style.width = widthPx + 'px';
     renderRuler(widthPx, total);
     var clipEls = clipsTrack.children;
     for (var i = 0; i < subs.length; i++) {
-      clipEls[i].style.width = (subs[i].dur * PX_PER_SEC) + 'px';
-      clipEls[i].querySelector('.clip-dur').textContent = subs[i].dur.toFixed(1) + 's';
+      clipEls[i].style.width = msToPx(subs[i].durMs, pxPerSec) + 'px';
+      clipEls[i].querySelector('.clip-dur').textContent = (subs[i].durMs / 1000).toFixed(1) + 's';
       clipEls[i].classList.toggle('edited', subs[i].edited);
     }
     refreshPlayheadUI();
@@ -524,20 +694,21 @@
 
   // 構造(枚数・テキスト)が変わった場合のフル再構築。
   function renderTimeline() {
-    var total = totalDuration(subs);
-    var widthPx = Math.max(total * PX_PER_SEC, 1);
+    var total = totalDurationMs(subs);
+    var pxPerSec = currentPxPerSec();
+    var widthPx = Math.max(msToPx(total, pxPerSec), 1);
     timelineInner.style.width = widthPx + 'px';
     clipsTrack.style.width = widthPx + 'px';
     renderRuler(widthPx, total);
 
     clipsTrack.innerHTML = '';
-    var starts = computeStarts(subs);
+    var starts = computeStartsMs(subs);
     var frag = document.createDocumentFragment();
 
     subs.forEach(function (sub, index) {
       var clip = document.createElement('div');
       clip.className = 'clip' + (sub.edited ? ' edited' : '');
-      clip.style.width = (sub.dur * PX_PER_SEC) + 'px';
+      clip.style.width = msToPx(sub.durMs, pxPerSec) + 'px';
 
       var textDiv = document.createElement('div');
       textDiv.className = 'clip-text';
@@ -546,7 +717,7 @@
 
       var durDiv = document.createElement('div');
       durDiv.className = 'clip-dur';
-      durDiv.textContent = sub.dur.toFixed(1) + 's';
+      durDiv.textContent = (sub.durMs / 1000).toFixed(1) + 's';
 
       var handle = document.createElement('div');
       handle.className = 'clip-handle';
@@ -561,23 +732,24 @@
         e.preventDefault();
         try { handle.setPointerCapture(e.pointerId); } catch (err) { /* キャプチャ失敗時もハンドル上でのドラッグ自体は継続できる */ }
         history = pushHistory(history, subs);
-        dragState = { index: index, startX: e.clientX, startDur: subs[index].dur };
+        dragState = { index: index, startX: e.clientX, startDurMs: subs[index].durMs };
       });
       handle.addEventListener('pointermove', function (e) {
         if (!dragState || dragState.index !== index) return;
-        var deltaSec = (e.clientX - dragState.startX) / PX_PER_SEC;
-        subs = setClipDuration(subs, index, dragState.startDur + deltaSec);
+        var deltaMs = pxToMs(e.clientX - dragState.startX, currentPxPerSec());
+        subs = setClipDuration(subs, index, dragState.startDurMs + deltaMs);
         relayout();
       });
       handle.addEventListener('pointerup', function (e) {
         if (!dragState || dragState.index !== index) return;
         try { handle.releasePointerCapture(e.pointerId); } catch (err) { /* 未キャプチャの場合は何もしない */ }
         dragState = null;
+        scheduleSave();
       });
       clip.addEventListener('click', function (e) {
         var rect = clip.getBoundingClientRect();
         var offsetX = e.clientX - rect.left;
-        seekTo(starts[index] + offsetX / PX_PER_SEC);
+        seekTo(starts[index] + pxToMs(offsetX, currentPxPerSec()));
       });
     });
 
@@ -591,7 +763,7 @@
   }
 
   function autoScrollToPlayhead() {
-    var x = headTime * PX_PER_SEC;
+    var x = msToPx(headTimeMs, currentPxPerSec());
     var viewLeft = timelineWrap.scrollLeft;
     var viewWidth = timelineWrap.clientWidth;
     if (x > viewLeft + viewWidth - AUTOSCROLL_MARGIN) {
@@ -601,11 +773,12 @@
     }
   }
 
-  function seekTo(t) {
-    var total = totalDuration(subs);
-    headTime = Math.max(0, Math.min(total, t));
+  function seekTo(tMs) {
+    var total = totalDurationMs(subs);
+    headTimeMs = Math.max(0, Math.min(total, tMs));
     refreshPlayheadUI();
     autoScrollToPlayhead();
+    scheduleSave();
   }
 
   function updatePlayPauseIcon() {
@@ -613,24 +786,26 @@
   }
 
   function stopPlayback() {
+    var wasPlaying = playing;
     playing = false;
     if (rafId !== null) cancelAnimationFrame(rafId);
     rafId = null;
     updatePlayPauseIcon();
+    if (wasPlaying) scheduleSave();
   }
 
   function playTick(now) {
-    var elapsed = (now - playStartPerf) / 1000;
-    var total = totalDuration(subs);
-    var t = playStartHead + elapsed;
+    var elapsedMs = now - playStartPerf;
+    var total = totalDurationMs(subs);
+    var t = playStartHeadMs + elapsedMs;
     if (t >= total) {
-      headTime = total;
+      headTimeMs = total;
       refreshPlayheadUI();
       autoScrollToPlayhead();
       stopPlayback();
       return;
     }
-    headTime = t;
+    headTimeMs = t;
     refreshPlayheadUI();
     autoScrollToPlayhead();
     rafId = requestAnimationFrame(playTick);
@@ -638,11 +813,11 @@
 
   function startPlayback() {
     if (subs.length === 0) return;
-    var total = totalDuration(subs);
-    if (headTime >= total) headTime = 0;
+    var total = totalDurationMs(subs);
+    if (headTimeMs >= total) headTimeMs = 0;
     playing = true;
     playStartPerf = performance.now();
-    playStartHead = headTime;
+    playStartHeadMs = headTimeMs;
     updatePlayPauseIcon();
     rafId = requestAnimationFrame(playTick);
   }
@@ -654,8 +829,8 @@
   function stepUp() {
     var idx = currentClipIndex();
     if (idx === -1) return;
-    var starts = computeStarts(subs);
-    if (headTime - starts[idx] > HEAD_BACK_THRESHOLD) {
+    var starts = computeStartsMs(subs);
+    if (headTimeMs - starts[idx] > HEAD_BACK_THRESHOLD_MS) {
       seekTo(starts[idx]);
     } else if (idx > 0) {
       seekTo(starts[idx - 1]);
@@ -667,7 +842,7 @@
   function stepDown() {
     var idx = currentClipIndex();
     if (idx === -1 || idx >= subs.length - 1) return;
-    var starts = computeStarts(subs);
+    var starts = computeStartsMs(subs);
     seekTo(starts[idx + 1]);
   }
 
@@ -675,7 +850,7 @@
     var idx = currentClipIndex();
     if (idx === -1) return;
     history = pushHistory(history, subs);
-    var result = trimClipAtHead(subs, idx, headTime);
+    var result = trimClipAtHead(subs, idx, headTimeMs);
     if (!result.ok) {
       history = history.slice(0, -1);
       setHint('これ以上短くできません（最小0.3秒）');
@@ -684,6 +859,7 @@
     subs = result.subs;
     setHint('クリップをトリムしました');
     renderTimeline();
+    scheduleSave();
   }
 
   function doMerge() {
@@ -699,6 +875,7 @@
     subs = result.subs;
     setHint('クリップを結合しました');
     renderTimeline();
+    scheduleSave();
   }
 
   function doDelete() {
@@ -707,10 +884,11 @@
     history = pushHistory(history, subs);
     var result = deleteClipAt(subs, idx);
     subs = result.subs;
-    var total = totalDuration(subs);
-    if (headTime > total) headTime = total;
+    var total = totalDurationMs(subs);
+    if (headTimeMs > total) headTimeMs = total;
     setHint('クリップを削除しました');
     renderTimeline();
+    scheduleSave();
   }
 
   function doUndo() {
@@ -721,10 +899,11 @@
     }
     history = restored.stack;
     subs = restored.subs;
-    var total = totalDuration(subs);
-    if (headTime > total) headTime = total;
+    var total = totalDurationMs(subs);
+    if (headTimeMs > total) headTimeMs = total;
     setHint('元に戻しました');
     renderTimeline();
+    scheduleSave();
   }
 
   function startTextEdit(idx) {
@@ -759,6 +938,7 @@
         subs = next;
         setHint('テキストを編集しました');
         renderTimeline();
+        scheduleSave();
       } else {
         renderPreview();
       }
@@ -780,37 +960,51 @@
     el.addEventListener('blur', commit);
   }
 
-  function enterEditMode() {
-    var text = textarea.value;
-    var cps = parseFloat(cpsInput.value);
-    var lineGroups = segmentManuscript(text);
-    if (lineGroups.length === 0) return;
-
-    subs = subsFromLineGroups(lineGroups, cps);
-    currentCps = (isFinite(cps) && cps > 0) ? cps : 12;
-    history = [];
-    headTime = 0;
+  function showEditor() {
     editingText = false;
     stopPlayback();
     mode = 'edit';
-
     mainView.style.display = 'none';
     editorView.style.display = '';
     editorCps.value = String(currentCps);
     editorCpsValue.textContent = String(currentCps);
     setHint('');
     renderTimeline();
+    scheduleSave();
+  }
+
+  function enterEditMode() {
+    var text = textarea.value;
+    var cps = parseFloat(cpsInput.value);
+
+    if (hasTimelineState) {
+      if (textEquals(text, reconstructManuscript(subs))) {
+        showEditor();
+        return;
+      }
+      var ok = window.confirm('原稿が変更されています。タイムラインを再構築すると、手動調整した尺はリセットされます。よろしいですか？');
+      if (!ok) return;
+    }
+
+    var segments = segmentManuscript(text);
+    if (segments.length === 0) return;
+
+    subs = subsFromSegments(segments, cps);
+    currentCps = (isFinite(cps) && cps > 0) ? cps : 12;
+    history = [];
+    headTimeMs = 0;
+    hasTimelineState = true;
+    showEditor();
   }
 
   function exitEditMode() {
-    var ok = window.confirm('タイムラインでの編集内容は破棄されます。よろしいですか？');
-    if (!ok) return;
     stopPlayback();
+    textarea.value = reconstructManuscript(subs);
     mode = 'input';
-    subs = [];
-    history = [];
     editorView.style.display = 'none';
     mainView.style.display = '';
+    render();
+    scheduleSave();
   }
 
   function downloadFromSubs() {
@@ -834,6 +1028,36 @@
     setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
   }
 
+  function setZoom(newIndex) {
+    newIndex = clampZoomIndex(newIndex);
+    if (newIndex === zoomIndex) return;
+    var oldPxPerSec = currentPxPerSec();
+    var rect = timelineWrap.getBoundingClientRect();
+    var scrollLeft = timelineWrap.scrollLeft;
+    var viewWidth = rect.width;
+    var headX = msToPx(headTimeMs, oldPxPerSec);
+
+    var anchorMs, anchorScreenX;
+    if (headX >= scrollLeft && headX <= scrollLeft + viewWidth) {
+      anchorMs = headTimeMs;
+      anchorScreenX = headX - scrollLeft;
+    } else {
+      var centerX = scrollLeft + viewWidth / 2;
+      anchorMs = pxToMs(centerX, oldPxPerSec);
+      anchorScreenX = viewWidth / 2;
+    }
+
+    zoomIndex = newIndex;
+    renderTimeline();
+
+    var newAnchorX = msToPx(anchorMs, currentPxPerSec());
+    timelineWrap.scrollLeft = Math.max(0, newAnchorX - anchorScreenX);
+    setHint('ズーム: ' + currentPxPerSec() + 'px/秒');
+    scheduleSave();
+  }
+  function zoomIn() { setZoom(zoomIndex + 1); }
+  function zoomOut() { setZoom(zoomIndex - 1); }
+
   toTimelineBtn.addEventListener('click', enterEditMode);
   backBtn.addEventListener('click', exitEditMode);
   playPauseBtn.addEventListener('click', togglePlay);
@@ -847,7 +1071,7 @@
   ruler.addEventListener('click', function (e) {
     var rect = ruler.getBoundingClientRect();
     var offsetX = e.clientX - rect.left;
-    seekTo(offsetX / PX_PER_SEC);
+    seekTo(pxToMs(offsetX, currentPxPerSec()));
   });
 
   previewBox.addEventListener('dblclick', function () {
@@ -863,18 +1087,26 @@
     }
     currentCps = parseFloat(editorCps.value);
     editorCpsValue.textContent = String(currentCps);
+    cpsInput.value = String(currentCps);
     subs = recalcUneditedDurations(subs, currentCps);
-    var total = totalDuration(subs);
-    if (headTime > total) headTime = total;
+    var total = totalDurationMs(subs);
+    if (headTimeMs > total) headTimeMs = total;
     renderTimeline();
   });
   editorCps.addEventListener('change', function () {
     cpsAdjusting = false;
     setHint('読み速度を変更しました（編集済みクリップは変更されません）');
+    scheduleSave();
   });
 
   document.addEventListener('keydown', function (e) {
     if (mode !== 'edit' || editingText) return;
+
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault();
+      doUndo();
+      return;
+    }
     if (e.key === ' ' || e.code === 'Space') {
       e.preventDefault();
       togglePlay();
@@ -888,14 +1120,45 @@
       doTrim();
     } else if (e.key === 'm' || e.key === 'M') {
       doMerge();
+    } else if (e.key === 'x' || e.key === 'X') {
+      zoomIn();
+    } else if (e.key === 'z' || e.key === 'Z') {
+      zoomOut();
     } else if (e.key === 'Delete' || e.key === 'Backspace') {
       e.preventDefault();
       doDelete();
-    } else if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
-      e.preventDefault();
-      doUndo();
     }
   });
 
-  render();
+  // ---- 入力モードの状態変更 -> 自動保存(300msデバウンス) ----
+  textarea.addEventListener('input', function () {
+    render();
+    scheduleSave();
+  });
+  cpsInput.addEventListener('input', function () {
+    render();
+    scheduleSave();
+  });
+  bomCheckbox.addEventListener('change', function () {
+    scheduleSave();
+  });
+  downloadBtn.addEventListener('click', download);
+
+  // ---- 新規作成: localStorageを破棄して初期状態に戻す ----
+  if (newSessionBtn) {
+    newSessionBtn.addEventListener('click', function () {
+      var ok = window.confirm('新規作成すると、保存されている内容(原稿・タイムライン調整内容)がすべて削除されます。よろしいですか？');
+      if (!ok) return;
+      try { localStorage.removeItem(STORAGE_KEY); } catch (err) { /* ignore */ }
+      location.reload();
+    });
+  }
+
+  // ---- 初期化: localStorageからの復元を試みる ----
+  var restored = tryRestoreFromStorage();
+  if (restored) {
+    if (restoreBanner) restoreBanner.style.display = '';
+  } else {
+    render();
+  }
 })();
