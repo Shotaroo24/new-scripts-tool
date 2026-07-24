@@ -33,12 +33,24 @@ var lib = new Function(
   'setClipDuration: setClipDuration, trimClipAtHead: trimClipAtHead, ' +
   'mergeClipAt: mergeClipAt, deleteClipAt: deleteClipAt, ' +
   'recalcUneditedDurations: recalcUneditedDurations, subsToCues: subsToCues, ' +
-  'reconstructManuscript: reconstructManuscript, textEquals: textEquals, ' +
+  'reconstructManuscript: reconstructManuscript, reconstructTranslation: reconstructTranslation, ' +
+  'textEquals: textEquals, ' +
   'pushHistory: pushHistory, popHistory: popHistory, charCountForText: charCountForText, ' +
   'formatClock: formatClock, ZOOM_LEVELS: ZOOM_LEVELS, msToPx: msToPx, pxToMs: pxToMs, ' +
   'pickTickIntervalSec: pickTickIntervalSec, clampZoomIndex: clampZoomIndex, ' +
   'isValidSessionData: isValidSessionData, serializeSession: serializeSession, ' +
-  'deserializeSession: deserializeSession, MIN_DUR_MS: MIN_DUR_MS };'
+  'deserializeSession: deserializeSession, MIN_DUR_MS: MIN_DUR_MS, ' +
+  'splitEnglishLines: splitEnglishLines, buildAlignmentWarning: buildAlignmentWarning, ' +
+  'rowMismatchMessage: rowMismatchMessage, shiftEnglishDown: shiftEnglishDown, ' +
+  'compactEnglish: compactEnglish, findBestSplit: findBestSplit, judgeLineCount: judgeLineCount, ' +
+  'autoSplitToTwoLines: autoSplitToTwoLines, collapseToOneLine: collapseToOneLine, ' +
+  'measurementFontSize: measurementFontSize, previewFontSizePx: previewFontSizePx, ' +
+  'previewStrokeWidthPx: previewStrokeWidthPx, previewBaselineOffsetPx: previewBaselineOffsetPx, ' +
+  'previewSafeMargins: previewSafeMargins, clampCalibration: clampCalibration, ' +
+  'SAFE_WIDTH_1080: SAFE_WIDTH_1080, CANVAS_BASE_WIDTH: CANVAS_BASE_WIDTH, ' +
+  'STROKE_WIDTH_AT_1080: STROKE_WIDTH_AT_1080, SUBTITLE_BASELINE_FROM_BOTTOM: SUBTITLE_BASELINE_FROM_BOTTOM, ' +
+  'FONT_SIZE_DEFAULT: FONT_SIZE_DEFAULT, CALIBRATION_DEFAULT: CALIBRATION_DEFAULT, ' +
+  'CALIBRATION_MIN: CALIBRATION_MIN, CALIBRATION_MAX: CALIBRATION_MAX };'
 )();
 
 var segmentManuscript = lib.segmentManuscript;
@@ -57,6 +69,7 @@ var deleteClipAt = lib.deleteClipAt;
 var recalcUneditedDurations = lib.recalcUneditedDurations;
 var subsToCues = lib.subsToCues;
 var reconstructManuscript = lib.reconstructManuscript;
+var reconstructTranslation = lib.reconstructTranslation;
 var textEquals = lib.textEquals;
 var pushHistory = lib.pushHistory;
 var popHistory = lib.popHistory;
@@ -71,6 +84,29 @@ var isValidSessionData = lib.isValidSessionData;
 var serializeSession = lib.serializeSession;
 var deserializeSession = lib.deserializeSession;
 var MIN_DUR_MS = lib.MIN_DUR_MS;
+var splitEnglishLines = lib.splitEnglishLines;
+var buildAlignmentWarning = lib.buildAlignmentWarning;
+var rowMismatchMessage = lib.rowMismatchMessage;
+var shiftEnglishDown = lib.shiftEnglishDown;
+var compactEnglish = lib.compactEnglish;
+var findBestSplit = lib.findBestSplit;
+var judgeLineCount = lib.judgeLineCount;
+var autoSplitToTwoLines = lib.autoSplitToTwoLines;
+var collapseToOneLine = lib.collapseToOneLine;
+var measurementFontSize = lib.measurementFontSize;
+var previewFontSizePx = lib.previewFontSizePx;
+var previewStrokeWidthPx = lib.previewStrokeWidthPx;
+var previewBaselineOffsetPx = lib.previewBaselineOffsetPx;
+var previewSafeMargins = lib.previewSafeMargins;
+var clampCalibration = lib.clampCalibration;
+var SAFE_WIDTH_1080 = lib.SAFE_WIDTH_1080;
+var CANVAS_BASE_WIDTH = lib.CANVAS_BASE_WIDTH;
+var STROKE_WIDTH_AT_1080 = lib.STROKE_WIDTH_AT_1080;
+var SUBTITLE_BASELINE_FROM_BOTTOM = lib.SUBTITLE_BASELINE_FROM_BOTTOM;
+var FONT_SIZE_DEFAULT = lib.FONT_SIZE_DEFAULT;
+var CALIBRATION_DEFAULT = lib.CALIBRATION_DEFAULT;
+var CALIBRATION_MIN = lib.CALIBRATION_MIN;
+var CALIBRATION_MAX = lib.CALIBRATION_MAX;
 
 var passCount = 0;
 var failCount = 0;
@@ -207,11 +243,11 @@ function assert(cond, msg) {
   assert(srtWithBom.charCodeAt(0) === 0xfeff, 'BOM指定時は先頭にU+FEFFが付く');
 })();
 
-// --- srtgen-timeline-spec.md 第7節 受け入れテスト (ms整数ベース) ---
+// --- タイムライン(ms整数ベース) ---
 
 function makeSubs(dursMs) {
   return dursMs.map(function (d, i) {
-    return { text: 'text' + i, durMs: d, edited: false, delim: '' };
+    return { text: 'text' + i, durMs: d, edited: false, delim: '', en: '' };
   });
 }
 
@@ -242,17 +278,20 @@ function makeSubs(dursMs) {
   assert(result.subs === subs, '#T3 拒否時は元の配列そのままが返る(状態不変)');
 })();
 
-// 4: 結合。テキストがスペース連結、尺が合算、配列長が1減る。delimは右側を引き継ぐ
+// 4: 結合。テキスト・英訳がスペース連結、尺が合算、配列長が1減る。delimは右側を引き継ぐ
 (function () {
   var subs = makeSubs([1000, 2000, 1500]);
   subs[0].text = 'مرحبا';
   subs[0].delim = '.'; // 左のdelimは破棄されるはず
+  subs[0].en = 'Hello';
   subs[1].text = 'بك';
   subs[1].delim = '،'; // 右のdelimは引き継がれるはず
+  subs[1].en = 'there';
   var result = mergeClipAt(subs, 0);
   assert(result.ok, '#T4 結合が成功する');
   assert(result.subs.length === 2, '#T4 配列長が1減る');
   assert(result.subs[0].text === 'مرحبا بك', '#T4 テキストがスペース連結される -> "' + result.subs[0].text + '"');
+  assert(result.subs[0].en === 'Hello there', '#T4 英訳もスペース連結される -> "' + result.subs[0].en + '"');
   assert(result.subs[0].durMs === 3000, '#T4 尺が合算される -> ' + result.subs[0].durMs);
   assert(result.subs[0].edited === true, '#T4 結合後のクリップはedited:trueになる');
   assert(result.subs[0].delim === '،', '#T4 delimは右クリップのものを引き継ぐ -> "' + result.subs[0].delim + '"');
@@ -265,12 +304,14 @@ function makeSubs(dursMs) {
   assert(result.ok === false, '#T4b 最終クリップの結合は拒否される');
 })();
 
-// 5: 削除。配列長が1減り、後続の開始時刻が繰り上がる
+// 5: 削除。配列長が1減り、後続の開始時刻が繰り上がる(英訳も連動して消える)
 (function () {
   var subs = makeSubs([1000, 2000, 1500]);
+  subs[0].en = 'first';
   var result = deleteClipAt(subs, 0);
   assert(result.ok, '#T5 削除が成功する');
   assert(result.subs.length === 2, '#T5 配列長が1減る');
+  assert(result.subs.indexOf(subs[0]) === -1, '#T5 削除したクリップの英訳も連動して消える');
   var starts = computeStartsMs(result.subs);
   assert(starts[0] === 0 && starts[1] === 2000, '#T5 後続の開始時刻が繰り上がる -> ' + JSON.stringify(starts));
 })();
@@ -319,19 +360,21 @@ function makeSubs(dursMs) {
   assert(history[0][0].durMs === 6, '#T7b 古い履歴(6件目未満)は破棄されている -> ' + history[0][0].durMs);
 })();
 
-// --- 追加要件: edited フラグと cps 再計算 ---
+// --- edited フラグと cps 再計算 ---
 
-// (a) cps変更で edited:false のみ再計算され、edited は不変
+// (a) cps変更で edited:false のみ再計算され、edited は不変。enはそのまま保持される
 (function () {
   var subs = [
-    { text: 'أ'.repeat(12), durMs: 1000, edited: false, delim: '' },
-    { text: 'ب'.repeat(12), durMs: 5000, edited: true, delim: '' }
+    { text: 'أ'.repeat(12), durMs: 1000, edited: false, delim: '', en: 'unedited-en' },
+    { text: 'ب'.repeat(12), durMs: 5000, edited: true, delim: '', en: 'edited-en' }
   ];
   var next = recalcUneditedDurations(subs, 12);
   assert(next[0].durMs === 1000, '#A1 unedited(cps=12,12文字)は再計算後も1000ms -> ' + next[0].durMs);
   assert(next[0].edited === false, '#A1 unedited のeditedはfalseのまま');
+  assert(next[0].en === 'unedited-en', '#A1 unedited のenは保持される');
   assert(next[1].durMs === 5000, '#A1 edited:trueのクリップは尺が変更されない -> ' + next[1].durMs);
   assert(next[1].edited === true, '#A1 edited:trueのクリップのeditedは不変');
+  assert(next[1].en === 'edited-en', '#A1 edited:trueのenも保持される');
 
   var next2 = recalcUneditedDurations(subs, 6);
   assert(next2[0].durMs === 2000, '#A1 cps=6に変更するとunedited(12文字)は2000msに再計算される -> ' + next2[0].durMs);
@@ -341,7 +384,7 @@ function makeSubs(dursMs) {
 // (b) cps変更 -> Undoで復元される
 (function () {
   var subs = [
-    { text: 'أ'.repeat(12), durMs: 1000, edited: false, delim: '' }
+    { text: 'أ'.repeat(12), durMs: 1000, edited: false, delim: '', en: '' }
   ];
   var history = [];
   var before = JSON.parse(JSON.stringify(subs));
@@ -367,28 +410,33 @@ function makeSubs(dursMs) {
 // deleteClipAt は残存クリップの edited フラグに影響しない
 (function () {
   var subs = [
-    { text: 'a', durMs: 1000, edited: true, delim: '' },
-    { text: 'b', durMs: 1000, edited: false, delim: '' },
-    { text: 'c', durMs: 1000, edited: true, delim: '' }
+    { text: 'a', durMs: 1000, edited: true, delim: '', en: '' },
+    { text: 'b', durMs: 1000, edited: false, delim: '', en: '' },
+    { text: 'c', durMs: 1000, edited: true, delim: '', en: '' }
   ];
   var result = deleteClipAt(subs, 0);
   assert(result.subs[0].edited === false, '#A4 削除後も残存クリップのeditedは不変(1) -> ' + result.subs[0].edited);
   assert(result.subs[1].edited === true, '#A4 削除後も残存クリップのeditedは不変(2) -> ' + result.subs[1].edited);
 })();
 
-// subsFromSegments: 生成時は全クリップ edited:false、durMsはcpsからMath.round・最小300msクランプ
+// subsFromSegments: 生成時は全クリップ edited:false、durMsはcpsからMath.round・最小300msクランプ。enLinesがマッピングされる
 (function () {
   var subs = subsFromSegments(
     [{ lines: ['أ'], delim: '' }, { lines: ['أأأأأأأأأأأأأأأأأأأأأأأأ'], delim: '.' }],
-    12
+    12,
+    ['Hi', 'Second line']
   ); // 1文字 / 24文字
   assert(subs[0].edited === false && subs[1].edited === false, '#A5 生成時は全クリップedited:false');
   assert(subs[0].durMs === MIN_DUR_MS, '#A5 1文字/12cps=83.3..msは最小300msにクランプされる -> ' + subs[0].durMs);
   assert(subs[1].durMs === 2000, '#A5 24文字/12cps=2000msはそのまま -> ' + subs[1].durMs);
   assert(subs[1].delim === '.', '#A5 segmentsのdelimがsubsにも引き継がれる');
+  assert(subs[0].en === 'Hi' && subs[1].en === 'Second line', '#A5 enLinesがインデックス順にマッピングされる');
+
+  var subsNoEn = subsFromSegments([{ lines: ['أ'], delim: '' }], 12);
+  assert(subsNoEn[0].en === '', '#A5 enLines省略時はenが空文字になる');
 })();
 
-// --- 今回の完了条件 ---
+// --- ①〜⑩: 今回の完了条件 ---
 
 // ①: ms精度で累積が一致すること(大量クリップでも整数演算のみで誤差ゼロ)
 (function () {
@@ -397,13 +445,13 @@ function makeSubs(dursMs) {
   for (var i = 0; i < n; i++) dursMs.push(333); // 0.1刻みでは表現できない値
   var subs = makeSubs(dursMs);
   var cues = subsToCues(subs);
-  assert(totalDurationMs(subs) === 333 * n, '#C1 合計msが正確 (' + (333 * n) + ')');
-  assert(cues[cues.length - 1].endMs === 333 * n, '#C1 最後のキューのendMsが理論値と完全一致(誤差ゼロ) -> ' + cues[cues.length - 1].endMs);
+  assert(totalDurationMs(subs) === 333 * n, '#1 合計msが正確 (' + (333 * n) + ')');
+  assert(cues[cues.length - 1].endMs === 333 * n, '#1 最後のキューのendMsが理論値と完全一致(誤差ゼロ) -> ' + cues[cues.length - 1].endMs);
   var gapOk = true;
   for (var j = 1; j < cues.length; j++) {
     if (cues[j].startMs !== cues[j - 1].endMs) { gapOk = false; break; }
   }
-  assert(gapOk, '#C1 137枚全てでギャップ0');
+  assert(gapOk, '#1 137枚全てでギャップ0');
 })();
 
 // ②: ズーム操作で尺・SRT出力が変化しないこと(pxPerSecはsubsToCues/buildSrtに一切渡らない)
@@ -413,123 +461,308 @@ function makeSubs(dursMs) {
   var srt = buildSrt(cues, false);
 
   ZOOM_LEVELS.forEach(function (pxPerSec) {
-    // ズーム段を変えてpx変換をしても、subs自体・cues・SRT出力は不変
     var px = msToPx(totalDurationMs(subs), pxPerSec);
     var backMs = pxToMs(px, pxPerSec);
-    assert(Math.abs(backMs - totalDurationMs(subs)) < 1e-6, '#C2 px<->ms相互変換の往復誤差が無視できる (pxPerSec=' + pxPerSec + ')');
+    assert(Math.abs(backMs - totalDurationMs(subs)) < 1e-6, '#2 px<->ms相互変換の往復誤差が無視できる (pxPerSec=' + pxPerSec + ')');
 
     var cues2 = subsToCues(subs);
     var srt2 = buildSrt(cues2, false);
-    assert(JSON.stringify(cues2) === JSON.stringify(cues), '#C2 ズーム段(pxPerSec=' + pxPerSec + ')に関わらずcuesが不変');
-    assert(srt2 === srt, '#C2 ズーム段(pxPerSec=' + pxPerSec + ')に関わらずSRT出力が不変');
+    assert(JSON.stringify(cues2) === JSON.stringify(cues), '#2 ズーム段(pxPerSec=' + pxPerSec + ')に関わらずcuesが不変');
+    assert(srt2 === srt, '#2 ズーム段(pxPerSec=' + pxPerSec + ')に関わらずSRT出力が不変');
   });
 
-  assert(clampZoomIndex(-5) === 0, '#C2 ズーム段の範囲外(下)は0にクランプされる');
-  assert(clampZoomIndex(999) === ZOOM_LEVELS.length - 1, '#C2 ズーム段の範囲外(上)は最大にクランプされる');
-
-  assert(pickTickIntervalSec(20) >= pickTickIntervalSec(400), '#C2 高いpx/secほど目盛り間隔が細かくなる(小さくなる)');
+  assert(clampZoomIndex(-5) === 0, '#2 ズーム段の範囲外(下)は0にクランプされる');
+  assert(clampZoomIndex(999) === ZOOM_LEVELS.length - 1, '#2 ズーム段の範囲外(上)は最大にクランプされる');
+  assert(pickTickIntervalSec(20) >= pickTickIntervalSec(400), '#2 高いpx/secほど目盛り間隔が細かくなる(小さくなる)');
 })();
 
-// ③: 書き戻しのラウンドトリップ一致(通常ケース) + 既知の例外(残す文字終わりのMで一致しない)
+// ③: 書き戻し(アラビア語+英訳)のラウンドトリップ一致(通常ケース) + 既知の例外
 (function () {
   var original = 'مرحبا، كيف حالك؟\nسطر ثاني بدون فاصلة. نص اخير!';
+  var enLines = ['Hello, how are you', 'second line without comma', 'last text'];
   var segments = segmentManuscript(original);
-  var subs = subsFromSegments(segments, 12);
+  var subs = subsFromSegments(segments, 12, enLines);
 
   var reconstructed = reconstructManuscript(subs);
-  var reparsedSegments = segmentManuscript(reconstructed);
-  var reparsedSubs = subsFromSegments(reparsedSegments, 12);
+  var reconstructedEn = reconstructTranslation(subs);
+  var expectedEn = subs.map(function (s) { return s.en; }).join('\n');
+  assert(reconstructedEn === expectedEn, '#3 英訳の書き戻しが1クリップ=1行で再構成される -> "' + reconstructedEn + '"');
 
-  assert(reparsedSubs.length === subs.length, '#C3 通常ケース: 書き戻し再変換でクリップ数が一致');
+  var reparsedSegments = segmentManuscript(reconstructed);
+  var reparsedEnLines = splitEnglishLines(reconstructedEn);
+  var reparsedSubs = subsFromSegments(reparsedSegments, 12, reparsedEnLines);
+
+  assert(reparsedSubs.length === subs.length, '#3 通常ケース: 書き戻し再変換でクリップ数が一致');
   for (var i = 0; i < subs.length; i++) {
-    assert(reparsedSubs[i].text === subs[i].text, '#C3 通常ケース: クリップ' + i + 'のtextが一致 -> "' + reparsedSubs[i].text + '" vs "' + subs[i].text + '"');
-    assert(reparsedSubs[i].delim === subs[i].delim, '#C3 通常ケース: クリップ' + i + 'のdelimが一致');
+    assert(reparsedSubs[i].text === subs[i].text, '#3 通常ケース: クリップ' + i + 'のtextが一致 -> "' + reparsedSubs[i].text + '" vs "' + subs[i].text + '"');
+    assert(reparsedSubs[i].delim === subs[i].delim, '#3 通常ケース: クリップ' + i + 'のdelimが一致');
+    assert(reparsedSubs[i].en === subs[i].en, '#3 通常ケース: クリップ' + i + 'のenが一致 -> "' + reparsedSubs[i].en + '" vs "' + subs[i].en + '"');
   }
 
   // 既知の例外: 「残す」系文字(؟ ? ! —)で終わるクリップをMで結合すると、
   // 本文中に残ったその文字が再変換時に再び区切りとして扱われ分割される。
   var exceptionText = 'كيف حالك؟ نص ثالث هنا';
   var exceptionSegments = segmentManuscript(exceptionText);
-  var exceptionSubs = subsFromSegments(exceptionSegments, 12);
-  assert(exceptionSubs.length === 2, '#C3 例外ケース準備: 2クリップに分割される');
+  var exceptionSubs = subsFromSegments(exceptionSegments, 12, ['a', 'b']);
+  assert(exceptionSubs.length === 2, '#3 例外ケース準備: 2クリップに分割される');
 
   var mergedResult = mergeClipAt(exceptionSubs, 0);
-  assert(mergedResult.ok, '#C3 例外ケース準備: Mで結合できる');
-  assert(mergedResult.subs.length === 1, '#C3 例外ケース準備: 結合後は1クリップ');
+  assert(mergedResult.ok, '#3 例外ケース準備: Mで結合できる');
+  assert(mergedResult.subs.length === 1, '#3 例外ケース準備: 結合後は1クリップ');
 
   var mergedReconstructed = reconstructManuscript(mergedResult.subs);
   var mergedReparsedSegments = segmentManuscript(mergedReconstructed);
   assert(
     mergedReparsedSegments.length === 2,
-    '#C3 既知の例外: 「残す」文字で終わるクリップのM結合後は、書き戻し再変換で再び分割される(ラウンドトリップ不一致) -> ' +
+    '#3 既知の例外: 「残す」文字で終わるクリップのM結合後は、書き戻し再変換で再び分割される(ラウンドトリップ不一致) -> ' +
     mergedReparsedSegments.length + '個に分割'
   );
 })();
 
-// ④: 原稿未編集で往復した際に edited 済みの尺が維持されること
+// ④: 原稿未編集で往復した際に edited 済みの尺が維持されること。cps/SRTはenの内容に無関係
 (function () {
   var original = 'مرحبا، كيف حالك؟ نص ثالث هنا.';
   var segments = segmentManuscript(original);
-  var subs = subsFromSegments(segments, 12);
+  var subs = subsFromSegments(segments, 12, ['a', 'b', 'c']);
 
   // ユーザーがドラッグでクリップ0の尺を手動調整(edited:true)したと仮定
   subs = setClipDuration(subs, 0, 9999);
-  assert(subs[0].edited === true, '#C4 前提: クリップ0はedited:true');
+  assert(subs[0].edited === true, '#4 前提: クリップ0はedited:true');
 
   var reconstructed = reconstructManuscript(subs);
+  var reconstructedEn = reconstructTranslation(subs);
 
-  // 原稿(textarea)が書き戻しテキストと完全一致 -> 再パースせず、そのまま復元してよい
-  var textareaUnchanged = reconstructed;
-  assert(textEquals(textareaUnchanged, reconstructManuscript(subs)) === true, '#C4 未編集なら書き戻しテキストと完全一致する');
+  // 原稿・英訳ともに書き戻しテキストと完全一致 -> 再パースせず、そのまま復元してよい
+  assert(textEquals(reconstructed, reconstructManuscript(subs)) === true, '#4 未編集なら書き戻しテキストと完全一致する');
+  assert(textEquals(reconstructedEn, reconstructTranslation(subs)) === true, '#4 英訳も未編集なら書き戻しテキストと完全一致する');
 
   // このとき再パースは行わないため、edited:trueの手動調整尺(9999ms)がそのまま維持される
-  assert(subs[0].durMs === 9999, '#C4 未編集判定時、再パースしなければeditedの尺(9999ms)が維持される');
+  assert(subs[0].durMs === 9999, '#4 未編集判定時、再パースしなければeditedの尺(9999ms)が維持される');
 
   // 一方、原稿が編集されていれば一致しない -> 再パースが必要と判定される
   var textareaEdited = reconstructed + ' 追記';
-  assert(textEquals(textareaEdited, reconstructManuscript(subs)) === false, '#C4 原稿が編集されていれば不一致と判定され、再パースが必要とわかる');
+  assert(textEquals(textareaEdited, reconstructManuscript(subs)) === false, '#4 原稿が編集されていれば不一致と判定され、再パースが必要とわかる');
+
+  // cps算出・SRT出力はenの内容・有無に一切影響されない
+  var subsNoEn = subsFromSegments(segments, 12, ['', '', '']);
+  var subsWithEn = subsFromSegments(segments, 12, ['long english translation text here', 'b', 'c']);
+  assert(
+    subsNoEn.map(function (s) { return s.durMs; }).join(',') === subsWithEn.map(function (s) { return s.durMs; }).join(','),
+    '#4 cps算出(durMs)はenの内容に影響されない'
+  );
+  var srtNoEn = buildSrt(subsToCues(subsNoEn), false);
+  var srtWithEn = buildSrt(subsToCues(subsWithEn), false);
+  assert(srtNoEn === srtWithEn, '#4 SRT出力はenの内容に影響されない');
 })();
 
-// ⑤: localStorageの保存・復元・破損時フォールバック(スキーマ検証)
+// ⑤: SRT出力に英訳が含まれないこと
+(function () {
+  var segments = segmentManuscript('مرحبا، كيف حالك؟');
+  var subs = subsFromSegments(segments, 12, ['Hello there translation marker XYZ', 'How are you translation marker XYZ']);
+  var srt = buildSrt(subsToCues(subs), false);
+  assert(srt.indexOf('XYZ') === -1, '#5 SRT出力に英訳の文字列が一切含まれない');
+  assert(srt.indexOf('مرحبا') !== -1, '#5 SRT出力にアラビア語本文は含まれる');
+})();
+
+// ⑥: 2行テキストがSRTの複数行キューとして正しく出力されること
+(function () {
+  var subs = [{ text: 'السطر الأول\nالسطر الثاني', durMs: 2000, edited: false, delim: '', en: '' }];
+  var cues = subsToCues(subs);
+  assert(cues[0].lines.length === 2, '#6 cueのlinesが2行になる');
+  var srt = buildSrt(cues, false);
+  assert(srt.indexOf('السطر الأول\nالسطر الثاني') !== -1, '#6 SRT内で改行を保持した複数行キューとして出力される -> ' + srt);
+})();
+
+// ⑦: 判定の3値分岐(境界値: 安全幅ちょうど、安全幅+1px)
+(function () {
+  // 1文字10pxの決定的な擬似計測関数(スペースは幅0として単語区切りのみに使う)
+  function fakeMeasure(text) {
+    var chars = Array.from(text);
+    var w = 0;
+    for (var i = 0; i < chars.length; i++) w += (chars[i] === ' ') ? 0 : 10;
+    return w;
+  }
+  // 安全幅ちょうど(90文字*10px=900px) -> 1行
+  var exact = judgeLineCount('a'.repeat(90), 900, fakeMeasure);
+  assert(exact.level === 'one-line', '#7 安全幅ちょうどは1行判定 -> ' + exact.level + ' (maxWidth=' + exact.maxWidth + ')');
+
+  // 安全幅+1px相当(91文字*10px=910px、スペースなしで分割不可) -> 溢れ
+  var over = judgeLineCount('a'.repeat(91), 900, fakeMeasure);
+  assert(over.level === 'overflow', '#7 安全幅+1px相当かつ分割不可は溢れ判定 -> ' + over.level);
+
+  // スペースありで2分割すれば安全幅に収まるケース -> 2行推奨
+  // 全体93文字(スペース込み)=930px(安全幅超過)だが、分割後は各46文字=460pxで収まる
+  var twoLineText = 'a'.repeat(46) + ' ' + 'a'.repeat(46);
+  var twoLine = judgeLineCount(twoLineText, 900, fakeMeasure);
+  assert(twoLine.level === 'two-line', '#7 分割すれば安全幅に収まる場合は2行推奨 -> ' + twoLine.level + ' (maxWidth=' + twoLine.maxWidth + ')');
+
+  // 2分割しても安全幅を超える場合 -> 溢れ
+  var overflowText = 'a'.repeat(100) + ' ' + 'a'.repeat(100);
+  var overflow2 = judgeLineCount(overflowText, 900, fakeMeasure);
+  assert(overflow2.level === 'overflow', '#7 分割しても安全幅を超える場合は溢れ判定 -> ' + overflow2.level);
+
+  // 既に手動2行(改行あり)の場合は行ごとに判定し、3行以上は常に溢れ
+  var threeLines = judgeLineCount('a'.repeat(10) + '\n' + 'a'.repeat(10) + '\n' + 'a'.repeat(10), 900, fakeMeasure);
+  assert(threeLines.level === 'overflow', '#7 3行以上は常に溢れ判定 -> ' + threeLines.level);
+})();
+
+// ⑧: calibration変更でプレビューのフォントサイズと判定(実測に使うフォントサイズ)が連動すること
+(function () {
+  var width = 320;
+  var size1 = previewFontSizePx(FONT_SIZE_DEFAULT, 1.0, width);
+  var size2 = previewFontSizePx(FONT_SIZE_DEFAULT, 1.2, width);
+  assert(Math.abs(size2 / size1 - 1.2) < 1e-9, '#8 calibrationに比例してプレビューのフォントサイズが変化する');
+
+  var measure1 = measurementFontSize(FONT_SIZE_DEFAULT, 1.0);
+  var measure2 = measurementFontSize(FONT_SIZE_DEFAULT, 1.2);
+  assert(Math.abs(measure2 / measure1 - 1.2) < 1e-9, '#8 calibrationに比例して実測用フォントサイズも同じ比率で変化する(判定と連動)');
+
+  assert(clampCalibration(0.5) === CALIBRATION_MIN, '#8 calibrationは下限にクランプされる');
+  assert(clampCalibration(2.0) === CALIBRATION_MAX, '#8 calibrationは上限にクランプされる');
+  assert(clampCalibration(CALIBRATION_DEFAULT) === CALIBRATION_DEFAULT, '#8 既定値はそのまま');
+})();
+
+// ⑨: プレビューの安全領域・ベースライン位置がプレビュー幅に比例してスケールすること(実測はPlaywrightで別途確認)
+(function () {
+  var width = 320;
+  var scale = width / CANVAS_BASE_WIDTH;
+  var baseline = previewBaselineOffsetPx(width);
+  assert(Math.abs(baseline - SUBTITLE_BASELINE_FROM_BOTTOM * scale) < 1e-9, '#9 ベースライン位置が1080px基準からプレビュー幅に比例して算出される -> ' + baseline);
+
+  var margins = previewSafeMargins(width);
+  assert(Math.abs(margins.left - 90 * scale) < 1e-9, '#9 安全領域(左)が比例してスケールする');
+  assert(Math.abs(margins.bottom - 300 * scale) < 1e-9, '#9 安全領域(下)が比例してスケールする');
+})();
+
+// ⑩: 判定に使う描画幅にストローク幅が加算されていること
+(function () {
+  function measureWithoutStroke(text) {
+    return Array.from(text).length * 10;
+  }
+  function measureWithStroke(text) {
+    return measureWithoutStroke(text) + STROKE_WIDTH_AT_1080;
+  }
+  // ちょうどストローク加算分だけ超える幅になるテキストで、有無により判定が変わることを確認する
+  var charCount = Math.floor(900 / 10); // ストロークなしでは安全幅ちょうど
+  var text = 'a'.repeat(charCount);
+
+  var withoutStroke = judgeLineCount(text, 900, measureWithoutStroke);
+  var withStroke = judgeLineCount(text, 900, measureWithStroke);
+
+  assert(withoutStroke.level === 'one-line', '#10 ストローク幅なしでは安全幅ちょうどで1行判定 -> ' + withoutStroke.level);
+  assert(withStroke.maxWidth === withoutStroke.maxWidth + STROKE_WIDTH_AT_1080, '#10 ストローク幅が測定幅に加算されている -> ' + withStroke.maxWidth);
+  assert(withStroke.level === 'overflow', '#10 ストローク幅を加算すると安全幅を超え溢れ判定に変わる -> ' + withStroke.level);
+})();
+
+// --- 英訳併記: 対応付け・ズレ検知・シフト/詰め ---
+
+// splitEnglishLines: 改行のみで分割し、空行もスキップせず1件として数える。完全な空文字列は0行
+(function () {
+  assert(splitEnglishLines('').length === 0, '#en1 空文字列は0行として扱う');
+  assert(splitEnglishLines('a\n\nb').length === 3, '#en1 空行もスキップせず1件として数える');
+  assert(splitEnglishLines('  a  \nb').join('|') === 'a|b', '#en1 各行の前後空白はトリムされる');
+})();
+
+// buildAlignmentWarning: 件数一致ならnull、不一致なら件数のみの警告文
+(function () {
+  assert(buildAlignmentWarning(5, 5) === null, '#en2 件数が一致すれば警告なし');
+  assert(buildAlignmentWarning(28, 25) === 'アラビア語 28件 / 英訳 25行 — 3行不足しています', '#en2 不足時の文言');
+  assert(buildAlignmentWarning(25, 28) === 'アラビア語 25件 / 英訳 28行 — 3行超過しています', '#en2 超過時の文言');
+})();
+
+// rowMismatchMessage: 件数比較のみ。内容の類似度等によるズレ位置推定は一切行わない
+(function () {
+  assert(rowMismatchMessage(0, 3, 3) === null, '#en3 対応がある行はnull');
+  assert(rowMismatchMessage(2, 3, 2) === '対応する英訳がありません', '#en3 アラビア語のみ存在する行');
+  assert(rowMismatchMessage(2, 2, 3) === '対応するアラビア語がありません', '#en3 英訳のみ存在する行');
+})();
+
+// shiftEnglishDown / compactEnglish: 英訳配列のみを操作する(アラビア語側には一切触れない)
+(function () {
+  var lines = ['a', 'b', 'c'];
+  var shifted = shiftEnglishDown(lines, 1);
+  assert(shifted.join(',') === 'a,,b,c', '#en4 指定位置に空行を挿入し以降が1つ後ろへ -> ' + shifted.join(','));
+  assert(lines.join(',') === 'a,b,c', '#en4 元の配列は変更されない(非破壊)');
+
+  var compacted = compactEnglish(lines, 1);
+  assert(compacted.join(',') === 'a,c', '#en4 指定行を削除し以降が1つ前へ -> ' + compacted.join(','));
+  assert(lines.join(',') === 'a,b,c', '#en4 元の配列は変更されない(非破壊、詰める側も)');
+})();
+
+// ②(完了条件): シフト/詰め操作をエンドツーエンドで行っても、アラビア語側の分割・尺は一切変化しない
+(function () {
+  var arabicText = 'مرحبا، كيف حالك؟ نص ثالث هنا.';
+  var segments = segmentManuscript(arabicText);
+  var subsBefore = subsFromSegments(segments, 12, ['a', 'b', 'c']);
+
+  var enLines = ['a', 'b', 'c'];
+  var shiftedLines = shiftEnglishDown(enLines, 1); // ['a','','b','c']
+  var segmentsAfter = segmentManuscript(arabicText); // アラビア語原稿は一切触れていない
+  var subsAfter = subsFromSegments(segmentsAfter, 12, shiftedLines);
+
+  assert(subsAfter.length === subsBefore.length, '#en5 英訳操作後もアラビア語のクリップ数は不変');
+  for (var i = 0; i < subsBefore.length; i++) {
+    assert(subsAfter[i].text === subsBefore[i].text, '#en5 クリップ' + i + 'のアラビア語本文は不変');
+    assert(subsAfter[i].durMs === subsBefore[i].durMs, '#en5 クリップ' + i + 'の尺(durMs)は不変');
+    assert(subsAfter[i].delim === subsBefore[i].delim, '#en5 クリップ' + i + 'のdelimは不変');
+  }
+})();
+
+// --- localStorage: 保存・復元・破損時フォールバック(スキーマv2) ---
 (function () {
   var validState = {
     manuscript: 'مرحبا',
+    translation: 'Hello',
     cps: 12,
     bom: false,
     mode: 'edit',
-    clips: [{ text: 'مرحبا', durMs: 1000, delim: '.', edited: false }],
+    clips: [{ text: 'مرحبا', durMs: 1000, delim: '.', edited: false, en: 'Hello' }],
     zoomIndex: 3,
-    headTimeMs: 500
+    headTimeMs: 500,
+    calibration: 1.05,
+    fontSize: 60
   };
   var raw = serializeSession(validState);
   var restored = deserializeSession(raw);
-  assert(restored !== null, '#C5 正常なセッションはシリアライズ/デシリアライズを往復できる');
-  assert(restored.manuscript === 'مرحبا', '#C5 復元データのmanuscriptが一致');
-  assert(restored.clips[0].durMs === 1000, '#C5 復元データのclips[0].durMsが一致');
-  assert(restored.version === 1, '#C5 復元データにversionが含まれる');
+  assert(restored !== null, '#local1 正常なセッションはシリアライズ/デシリアライズを往復できる');
+  assert(restored.manuscript === 'مرحبا', '#local1 復元データのmanuscriptが一致');
+  assert(restored.translation === 'Hello', '#local1 復元データのtranslationが一致');
+  assert(restored.clips[0].durMs === 1000, '#local1 復元データのclips[0].durMsが一致');
+  assert(restored.clips[0].en === 'Hello', '#local1 復元データのclips[0].enが一致');
+  assert(restored.calibration === 1.05, '#local1 復元データのcalibrationが一致');
+  assert(restored.fontSize === 60, '#local1 復元データのfontSizeが一致');
+  assert(restored.version === 2, '#local1 復元データにversion:2が含まれる');
 
-  assert(deserializeSession('これはJSONではない') === null, '#C5 JSONパース失敗時はnullを返す(例外を投げない)');
-  assert(deserializeSession('{"version":2,"manuscript":"a"}') === null, '#C5 バージョン不一致はnullを返す');
-  assert(deserializeSession('null') === null, '#C5 null の場合はnullを返す');
-  assert(deserializeSession('42') === null, '#C5 オブジェクトでない場合はnullを返す');
+  assert(deserializeSession('これはJSONではない') === null, '#local2 JSONパース失敗時はnullを返す(例外を投げない)');
+  assert(deserializeSession('{"version":1,"manuscript":"a"}') === null, '#local2 旧バージョン(v1)は破棄されnullを返す');
+  assert(deserializeSession('null') === null, '#local2 null の場合はnullを返す');
+  assert(deserializeSession('42') === null, '#local2 オブジェクトでない場合はnullを返す');
   assert(
-    deserializeSession(JSON.stringify({ version: 1, manuscript: 'a' })) === null,
-    '#C5 必須フィールド欠落時はnullを返す'
+    deserializeSession(JSON.stringify({ version: 2, manuscript: 'a' })) === null,
+    '#local2 必須フィールド欠落時はnullを返す'
   );
   assert(
     deserializeSession(JSON.stringify({
-      version: 1, manuscript: 'a', cps: 12, bom: false, mode: 'input',
-      clips: [{ text: 'x', durMs: 'not-a-number', delim: '', edited: false }],
-      zoomIndex: 0, headTimeMs: 0
+      version: 2, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
+      clips: [{ text: 'x', durMs: 'not-a-number', delim: '', edited: false, en: '' }],
+      zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55
     })) === null,
-    '#C5 clips内の型不正はnullを返す'
+    '#local2 clips内の型不正はnullを返す'
+  );
+  assert(
+    deserializeSession(JSON.stringify({
+      version: 2, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
+      clips: [{ text: 'x', durMs: 1000, delim: '', edited: false }], // en欠落
+      zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55
+    })) === null,
+    '#local2 clips内のen欠落はnullを返す'
   );
   assert(
     isValidSessionData({
-      version: 1, manuscript: 'a', cps: 12, bom: false, mode: 'input',
-      clips: [], zoomIndex: 0, headTimeMs: 0
+      version: 2, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
+      clips: [], zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55
     }) === true,
-    '#C5 クリップ0件でも有効なセッションとして扱われる'
+    '#local2 クリップ0件でも有効なセッションとして扱われる'
   );
 })();
 

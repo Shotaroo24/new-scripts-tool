@@ -147,7 +147,144 @@
   var ZOOM_LEVELS = [20, 35, 50, 75, 100, 150, 200, 300, 400];
   var DEFAULT_ZOOM_INDEX = ZOOM_LEVELS.indexOf(75); // 現行(80px/sec)に最も近い段
   var STORAGE_KEY = 'srtgen:session:v1';
-  var SCHEMA_VERSION = 1;
+  var SCHEMA_VERSION = 2; // 英訳(en)・calibration・fontSizeの追加に伴い旧v1データは破棄する
+
+  // ---- 9:16実寸プレビュー用の定数(1080x1920キャンバス基準) ----
+  var CANVAS_BASE_WIDTH = 1080;
+  var SAFE_MARGIN_LEFT_1080 = 90;
+  var SAFE_MARGIN_RIGHT_1080 = 90;
+  var SAFE_MARGIN_TOP_1080 = 100;
+  var SAFE_MARGIN_BOTTOM_1080 = 300;
+  var SAFE_WIDTH_1080 = CANVAS_BASE_WIDTH - SAFE_MARGIN_LEFT_1080 - SAFE_MARGIN_RIGHT_1080; // 900
+  var SUBTITLE_BASELINE_FROM_BOTTOM = 390; // 実機の実測値。映像下端からのオフセット(1080px空間)
+  var STROKE_WIDTH_AT_1080 = 6; // 縁取り幅(1080px空間)。paint-order:stroke fill前提
+  var FONT_SIZE_DEFAULT = 55;
+  var CALIBRATION_DEFAULT = 1.0;
+  var CALIBRATION_MIN = 0.80;
+  var CALIBRATION_MAX = 1.30;
+  var CALIBRATION_STEP = 0.01;
+
+  function clampCalibration(v) {
+    return Math.max(CALIBRATION_MIN, Math.min(CALIBRATION_MAX, v));
+  }
+  // 実測(canvas measureText)に使うフォントサイズ。1080px空間のまま、プレビューの縮尺は掛けない。
+  function measurementFontSize(fontSize, calibration) {
+    return fontSize * calibration;
+  }
+  // プレビュー枠(縮小表示)用のCSSフォントサイズ。
+  function previewFontSizePx(fontSize, calibration, previewWidthPx) {
+    return fontSize * calibration * (previewWidthPx / CANVAS_BASE_WIDTH);
+  }
+  function previewStrokeWidthPx(previewWidthPx) {
+    return STROKE_WIDTH_AT_1080 * (previewWidthPx / CANVAS_BASE_WIDTH);
+  }
+  function previewBaselineOffsetPx(previewWidthPx) {
+    return SUBTITLE_BASELINE_FROM_BOTTOM * (previewWidthPx / CANVAS_BASE_WIDTH);
+  }
+  function previewSafeMargins(previewWidthPx) {
+    var scale = previewWidthPx / CANVAS_BASE_WIDTH;
+    return {
+      left: SAFE_MARGIN_LEFT_1080 * scale,
+      right: SAFE_MARGIN_RIGHT_1080 * scale,
+      top: SAFE_MARGIN_TOP_1080 * scale,
+      bottom: SAFE_MARGIN_BOTTOM_1080 * scale
+    };
+  }
+
+  // ---- 行数判定(3値): 1行 / 2行推奨 / 溢れ ----
+  // measureFn(text)=>px は呼び出し側から注入する(DOM/canvasに依存させずNodeでテスト可能にするため)。
+  // 実アプリでは canvas measureText の結果に STROKE_WIDTH_AT_1080 を加算したものを渡す。
+  function findBestSplit(text, measureFn) {
+    var chars = Array.from(text);
+    var spaceIndices = [];
+    for (var i = 0; i < chars.length; i++) {
+      if (chars[i] === ' ') spaceIndices.push(i);
+    }
+    if (spaceIndices.length === 0) return null;
+    var mid = chars.length / 2;
+    var best = null;
+    for (var k = 0; k < spaceIndices.length; k++) {
+      var idx = spaceIndices[k];
+      var left = chars.slice(0, idx).join('');
+      var right = chars.slice(idx + 1).join('');
+      var lw = measureFn(left);
+      var rw = measureFn(right);
+      var diff = Math.abs(lw - rw);
+      var distFromMid = Math.abs(idx - mid);
+      if (best === null || diff < best.diff || (diff === best.diff && distFromMid < best.distFromMid)) {
+        best = { left: left, right: right, leftWidth: lw, rightWidth: rw, diff: diff, distFromMid: distFromMid };
+      }
+    }
+    return best;
+  }
+
+  // 既に改行を含む(手動2行)場合は行ごとにそのまま測る。含まない場合は
+  // 単語境界での自動分割を試み、最長行が安全幅に収まるかで判定する。
+  function judgeLineCount(text, safeWidthPx, measureFn) {
+    var lines = text.split('\n');
+    if (lines.length === 1) {
+      var w = measureFn(lines[0]);
+      if (w <= safeWidthPx) return { level: 'one-line', maxWidth: w };
+      var split = findBestSplit(lines[0], measureFn);
+      if (!split) return { level: 'overflow', maxWidth: w };
+      var maxW = Math.max(split.leftWidth, split.rightWidth);
+      return { level: maxW <= safeWidthPx ? 'two-line' : 'overflow', maxWidth: maxW, split: split };
+    }
+    var widths = lines.map(measureFn);
+    var maxWidth = Math.max.apply(null, widths);
+    if (lines.length > 2 || maxWidth > safeWidthPx) return { level: 'overflow', maxWidth: maxWidth };
+    return { level: 'two-line', maxWidth: maxWidth };
+  }
+
+  // 編集モーダルの「自動で2行に分割」「1行に戻す」。どちらも尺(durMs)には影響しない。
+  function autoSplitToTwoLines(text, measureFn) {
+    if (text.indexOf('\n') !== -1) return text;
+    var split = findBestSplit(text, measureFn);
+    if (!split) return text;
+    return split.left + '\n' + split.right;
+  }
+  function collapseToOneLine(text) {
+    return text.replace(/\n/g, ' ');
+  }
+
+  // ---- 英訳併記 ----
+  // 英訳は改行のみで分割する(区切り文字によるパースはしない)。空行もスキップせず1件として数える。
+  // ただし完全な空文字列(textarea未入力)は0行として扱う(1行の空行とは区別する)。
+  function splitEnglishLines(text) {
+    if (text === '') return [];
+    return text.replace(/\r/g, '').split('\n').map(function (l) { return l.trim(); });
+  }
+
+  function buildAlignmentWarning(arabicCount, enCount) {
+    if (arabicCount === enCount) return null;
+    var diff = arabicCount - enCount;
+    if (diff > 0) {
+      return 'アラビア語 ' + arabicCount + '件 / 英訳 ' + enCount + '行 — ' + diff + '行不足しています';
+    }
+    return 'アラビア語 ' + arabicCount + '件 / 英訳 ' + enCount + '行 — ' + (-diff) + '行超過しています';
+  }
+
+  // 行indexに対応する相手が存在しない場合のメッセージ。件数比較のみで、
+  // 内容の類似度等によるズレ位置の推定は一切行わない。
+  function rowMismatchMessage(index, arabicCount, enCount) {
+    if (index < arabicCount && index >= enCount) return '対応する英訳がありません';
+    if (index >= arabicCount && index < enCount) return '対応するアラビア語がありません';
+    return null;
+  }
+
+  // 「ここから1つ下にずらす」: index位置に空行を挿入し、以降を1つ後ろへ(英訳のみ操作)。
+  function shiftEnglishDown(lines, index) {
+    var next = lines.slice();
+    next.splice(index, 0, '');
+    return next;
+  }
+  // 「ここを詰める」: index行を削除し、以降を1つ前へ(英訳のみ操作)。
+  function compactEnglish(lines, index) {
+    if (index < 0 || index >= lines.length) return lines;
+    var next = lines.slice();
+    next.splice(index, 1);
+    return next;
+  }
 
   function clampDurMs(ms) {
     return Math.max(MIN_DUR_MS, Math.round(ms));
@@ -168,7 +305,8 @@
 
   // 生成: セグメント({lines,delim})から編集モード用の subs を組み立てる。
   // durMs は cps から算出しMath.roundでms整数化・最小300msでクランプ。全クリップ edited:false。
-  function subsFromSegments(segments, cps) {
+  // enLines(英訳の行配列)はインデックス順にマッピングする。cps算出には一切使わない。
+  function subsFromSegments(segments, cps, enLines) {
     var subs = [];
     for (var i = 0; i < segments.length; i++) {
       var text = segments[i].lines.join('\n');
@@ -177,7 +315,8 @@
         text: text,
         durMs: durMsFromCps(charCount, cps),
         edited: false,
-        delim: segments[i].delim
+        delim: segments[i].delim,
+        en: (enLines && enLines[i] !== undefined) ? enLines[i] : ''
       });
     }
     return subs;
@@ -219,7 +358,13 @@
   function cloneSubs(subs) {
     var out = [];
     for (var i = 0; i < subs.length; i++) {
-      out.push({ text: subs[i].text, durMs: subs[i].durMs, edited: subs[i].edited, delim: subs[i].delim });
+      out.push({
+        text: subs[i].text,
+        durMs: subs[i].durMs,
+        edited: subs[i].edited,
+        delim: subs[i].delim,
+        en: subs[i].en
+      });
     }
     return out;
   }
@@ -247,7 +392,7 @@
     return { ok: true, subs: next };
   }
 
-  // M: index番目と右隣(index+1)を結合する。テキストは半角スペース連結、尺は合算。
+  // M: index番目と右隣(index+1)を結合する。テキスト・英訳とも半角スペース連結、尺は合算。
   // delimは左クリップのものを破棄し、右クリップのものを引き継ぐ。
   // 最終クリップ(右隣が存在しない)なら拒否。
   function mergeClipAt(subs, index) {
@@ -261,7 +406,8 @@
       text: a.text + ' ' + b.text,
       durMs: a.durMs + b.durMs,
       edited: true,
-      delim: b.delim
+      delim: b.delim,
+      en: a.en + ' ' + b.en
     };
     next.splice(index, 2, merged);
     return { ok: true, subs: next };
@@ -283,7 +429,7 @@
     return subs.map(function (sub) {
       if (sub.edited) return sub;
       var charCount = charCountForText(sub.text);
-      return { text: sub.text, durMs: durMsFromCps(charCount, cps), edited: false, delim: sub.delim };
+      return { text: sub.text, durMs: durMsFromCps(charCount, cps), edited: false, delim: sub.delim, en: sub.en };
     });
   }
 
@@ -305,6 +451,11 @@
   // 空行として除去されるため分割結果には影響しない。
   function reconstructManuscript(subs) {
     return subs.map(function (s) { return s.text + s.delim; }).join('\n');
+  }
+
+  // 英訳の書き戻し: 各クリップのenを改行区切りで連結する(1クリップ=1行)。
+  function reconstructTranslation(subs) {
+    return subs.map(function (s) { return s.en; }).join('\n');
   }
 
   // 文字列の完全一致判定(コードポイント単位。正規化はしない)。
@@ -363,6 +514,7 @@
     if (!data || typeof data !== 'object') return false;
     if (data.version !== SCHEMA_VERSION) return false;
     if (typeof data.manuscript !== 'string') return false;
+    if (typeof data.translation !== 'string') return false;
     if (typeof data.cps !== 'number' || !isFinite(data.cps)) return false;
     if (typeof data.bom !== 'boolean') return false;
     if (data.mode !== 'input' && data.mode !== 'edit') return false;
@@ -374,9 +526,12 @@
       if (typeof c.durMs !== 'number' || !isFinite(c.durMs)) return false;
       if (typeof c.delim !== 'string') return false;
       if (typeof c.edited !== 'boolean') return false;
+      if (typeof c.en !== 'string') return false;
     }
     if (typeof data.zoomIndex !== 'number' || data.zoomIndex < 0 || data.zoomIndex >= ZOOM_LEVELS.length) return false;
     if (typeof data.headTimeMs !== 'number' || !isFinite(data.headTimeMs)) return false;
+    if (typeof data.calibration !== 'number' || !isFinite(data.calibration)) return false;
+    if (typeof data.fontSize !== 'number' || !isFinite(data.fontSize) || data.fontSize <= 0) return false;
     return true;
   }
 
@@ -384,14 +539,17 @@
     return JSON.stringify({
       version: SCHEMA_VERSION,
       manuscript: state.manuscript,
+      translation: state.translation,
       cps: state.cps,
       bom: state.bom,
       mode: state.mode,
       clips: state.clips.map(function (c) {
-        return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited };
+        return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited, en: c.en };
       }),
       zoomIndex: state.zoomIndex,
-      headTimeMs: Math.round(state.headTimeMs)
+      headTimeMs: Math.round(state.headTimeMs),
+      calibration: state.calibration,
+      fontSize: state.fontSize
     });
   }
 
@@ -409,12 +567,14 @@
 
   // ---- DOM wiring ----
   var textarea = document.getElementById('manuscript');
+  var translationTextarea = document.getElementById('translation');
   var cpsInput = document.getElementById('cps');
   var bomCheckbox = document.getElementById('bom');
   var downloadBtn = document.getElementById('downloadBtn');
   var toTimelineBtn = document.getElementById('toTimelineBtn');
   var previewList = document.getElementById('previewList');
   var emptyState = document.getElementById('emptyState');
+  var alignmentWarningEl = document.getElementById('alignmentWarning');
   var statCount = document.getElementById('statCount');
   var statDuration = document.getElementById('statDuration');
   var restoreBanner = document.getElementById('restoreBanner');
@@ -422,37 +582,73 @@
 
   var currentCues = [];
 
-  function buildCard(cue) {
-    var card = document.createElement('div');
-    card.className = 'cue-card';
+  // 対応付け確認ビューの1行を構築する。シフト/詰めるは英訳側のみを操作する。
+  function buildMappingRow(index, arabicText, enText, mismatchMsg) {
+    var row = document.createElement('div');
+    row.className = 'mapping-row' + (mismatchMsg ? ' mismatch' : '');
 
-    var meta = document.createElement('div');
-    meta.className = 'cue-meta';
+    var idxDiv = document.createElement('div');
+    idxDiv.className = 'mapping-index';
+    idxDiv.textContent = '#' + (index + 1);
 
-    var idxSpan = document.createElement('span');
-    idxSpan.className = 'cue-index';
-    idxSpan.textContent = '#' + cue.index;
+    var arDiv = document.createElement('div');
+    arDiv.className = 'mapping-arabic';
+    arDiv.dir = 'rtl';
+    arDiv.textContent = arabicText === null ? '(アラビア語なし)' : arabicText;
 
-    var timeSpan = document.createElement('span');
-    timeSpan.className = 'cue-time';
-    timeSpan.textContent = formatSrtTime(cue.startMs) + ' → ' + formatSrtTime(cue.endMs);
+    var enDiv = document.createElement('div');
+    if (enText) {
+      enDiv.className = 'mapping-english';
+      enDiv.textContent = enText;
+    } else {
+      enDiv.className = 'mapping-english mapping-english-empty';
+      enDiv.textContent = '(空)';
+    }
 
-    var charSpan = document.createElement('span');
-    charSpan.className = 'cue-chars';
-    charSpan.textContent = cue.charCount + '文字';
+    var countDiv = document.createElement('div');
+    countDiv.className = 'mapping-charcount';
+    countDiv.textContent = arabicText === null ? '' : (charCountForText(arabicText) + '文字');
 
-    meta.appendChild(idxSpan);
-    meta.appendChild(timeSpan);
-    meta.appendChild(charSpan);
+    row.appendChild(idxDiv);
+    row.appendChild(arDiv);
+    row.appendChild(enDiv);
+    row.appendChild(countDiv);
 
-    var body = document.createElement('div');
-    body.className = 'cue-text';
-    body.dir = 'rtl';
-    body.textContent = cue.lines.join('\n');
+    if (mismatchMsg) {
+      var note = document.createElement('div');
+      note.className = 'mapping-mismatch-note';
+      note.textContent = mismatchMsg;
+      row.appendChild(note);
+    }
 
-    card.appendChild(meta);
-    card.appendChild(body);
-    return card;
+    var actions = document.createElement('div');
+    actions.className = 'mapping-actions';
+
+    var shiftBtn = document.createElement('button');
+    shiftBtn.type = 'button';
+    shiftBtn.textContent = 'ここから1つ下にずらす';
+    shiftBtn.addEventListener('click', function () {
+      var lines = splitEnglishLines(translationTextarea.value);
+      translationTextarea.value = shiftEnglishDown(lines, index).join('\n');
+      render();
+      scheduleSave();
+    });
+
+    var compactBtn = document.createElement('button');
+    compactBtn.type = 'button';
+    compactBtn.textContent = 'ここを詰める';
+    compactBtn.addEventListener('click', function () {
+      var lines = splitEnglishLines(translationTextarea.value);
+      translationTextarea.value = compactEnglish(lines, index).join('\n');
+      render();
+      scheduleSave();
+    });
+
+    actions.appendChild(shiftBtn);
+    actions.appendChild(compactBtn);
+    row.appendChild(actions);
+
+    return row;
   }
 
   function render() {
@@ -461,18 +657,35 @@
     var segments = segmentManuscript(text);
     currentCues = buildCues(segments, cps);
 
+    var enLines = splitEnglishLines(translationTextarea.value);
+    var arabicCount = segments.length;
+    var enCount = enLines.length;
+    var maxRows = Math.max(arabicCount, enCount);
+
     previewList.innerHTML = '';
-    if (currentCues.length === 0) {
+    if (maxRows === 0) {
       emptyState.style.display = '';
       previewList.style.display = 'none';
+      alignmentWarningEl.style.display = 'none';
     } else {
       emptyState.style.display = 'none';
       previewList.style.display = '';
       var frag = document.createDocumentFragment();
-      for (var i = 0; i < currentCues.length; i++) {
-        frag.appendChild(buildCard(currentCues[i]));
+      for (var i = 0; i < maxRows; i++) {
+        var arabicText = i < arabicCount ? segments[i].lines.join('\n') : null;
+        var enText = i < enCount ? enLines[i] : '';
+        var mismatchMsg = rowMismatchMessage(i, arabicCount, enCount);
+        frag.appendChild(buildMappingRow(i, arabicText, enText, mismatchMsg));
       }
       previewList.appendChild(frag);
+
+      var warning = buildAlignmentWarning(arabicCount, enCount);
+      if (warning) {
+        alignmentWarningEl.textContent = warning;
+        alignmentWarningEl.style.display = '';
+      } else {
+        alignmentWarningEl.style.display = 'none';
+      }
     }
 
     statCount.textContent = String(currentCues.length);
@@ -519,12 +732,31 @@
   var editorHint = document.getElementById('editorHint');
   var editorCps = document.getElementById('editorCps');
   var editorCpsValue = document.getElementById('editorCpsValue');
-  var previewBox = document.getElementById('previewBox');
+  var previewFrame = document.getElementById('previewFrame');
+  var previewSafeGuide = document.getElementById('previewSafeGuide');
+  var previewSubtitleText = document.getElementById('previewSubtitleText');
+  var previewTranslationText = document.getElementById('previewTranslationText');
+  var previewJudgeBadge = document.getElementById('previewJudgeBadge');
+  var calibrationInput = document.getElementById('calibrationInput');
+  var calibrationValue = document.getElementById('calibrationValue');
+  var fontSizeInput = document.getElementById('fontSizeInput');
   var timelineWrap = document.getElementById('timelineWrap');
   var timelineInner = document.getElementById('timelineInner');
   var ruler = document.getElementById('ruler');
   var clipsTrack = document.getElementById('clipsTrack');
   var playhead = document.getElementById('playhead');
+
+  var editModal = document.getElementById('editModal');
+  var modalArabicText = document.getElementById('modalArabicText');
+  var modalEnglishText = document.getElementById('modalEnglishText');
+  var modalAutoSplitBtn = document.getElementById('modalAutoSplitBtn');
+  var modalCollapseBtn = document.getElementById('modalCollapseBtn');
+  var modalPreviewFrame = document.getElementById('modalPreviewFrame');
+  var modalSafeGuide = document.getElementById('modalSafeGuide');
+  var modalPreviewSubtitleText = document.getElementById('modalPreviewSubtitleText');
+  var modalJudgeBadge = document.getElementById('modalJudgeBadge');
+  var modalCancelBtn = document.getElementById('modalCancelBtn');
+  var modalSaveBtn = document.getElementById('modalSaveBtn');
 
   var mode = 'input'; // 'input' | 'edit'
   var subs = [];
@@ -536,10 +768,13 @@
   var playStartPerf = 0;
   var playStartHeadMs = 0;
   var currentCps = 12;
-  var editingText = false;
+  var modalOpen = false; // 編集モーダルが開いている間はショートカット無効
+  var modalIndex = -1;
   var dragState = null;
   var cpsAdjusting = false;
   var zoomIndex = DEFAULT_ZOOM_INDEX;
+  var calibration = CALIBRATION_DEFAULT;
+  var fontSize = FONT_SIZE_DEFAULT;
 
   var HEAD_BACK_THRESHOLD_MS = 150;
   var AUTOSCROLL_MARGIN = 60;
@@ -556,6 +791,32 @@
     return clipAt(subs, headTimeMs);
   }
 
+  // ---- 9:16実寸プレビュー用のCanvas幅測定(1080px空間、strokeWidth込み) ----
+  var measureCanvas = document.createElement('canvas');
+  var measureCtx = measureCanvas.getContext('2d');
+  function measureTextWidth1080(text) {
+    measureCtx.font = 'bold ' + measurementFontSize(fontSize, calibration) + 'px "Times New Roman"';
+    return measureCtx.measureText(text).width + STROKE_WIDTH_AT_1080;
+  }
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function () {
+      renderPreview(); // フォント読み込み完了後に測定・再描画
+    });
+  }
+
+  function renderJudgeBadge(el, judge) {
+    var labelMap = { 'one-line': '1行', 'two-line': '2行推奨', 'overflow': '溢れ' };
+    var classMap = { 'one-line': 'badge-one-line', 'two-line': 'badge-two-line', 'overflow': 'badge-overflow' };
+    el.innerHTML = '';
+    var badge = document.createElement('span');
+    badge.className = 'badge ' + classMap[judge.level];
+    badge.textContent = labelMap[judge.level];
+    el.appendChild(badge);
+    var detail = document.createElement('span');
+    detail.textContent = '描画幅 ' + Math.round(judge.maxWidth) + 'px ／ 安全幅 ' + SAFE_WIDTH_1080 + 'px';
+    el.appendChild(detail);
+  }
+
   // ---- 永続化: 保存(300msデバウンス)・復元 ----
   var saveTimer = null;
   function scheduleSave() {
@@ -569,12 +830,15 @@
     try {
       var raw = serializeSession({
         manuscript: textarea.value,
+        translation: translationTextarea.value,
         cps: currentCps,
         bom: bomCheckbox.checked,
         mode: mode,
         clips: subs,
         zoomIndex: zoomIndex,
-        headTimeMs: headTimeMs
+        headTimeMs: headTimeMs,
+        calibration: calibration,
+        fontSize: fontSize
       });
       localStorage.setItem(STORAGE_KEY, raw);
     } catch (err) {
@@ -598,17 +862,24 @@
     }
 
     textarea.value = data.manuscript;
+    translationTextarea.value = data.translation;
     cpsInput.value = String(data.cps);
     bomCheckbox.checked = data.bom;
 
     subs = data.clips.map(function (c) {
-      return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited };
+      return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited, en: c.en };
     });
     hasTimelineState = subs.length > 0;
     currentCps = data.cps;
     zoomIndex = clampZoomIndex(data.zoomIndex);
     headTimeMs = data.headTimeMs;
+    calibration = clampCalibration(data.calibration);
+    fontSize = data.fontSize;
     history = [];
+
+    calibrationInput.value = String(calibration);
+    calibrationValue.textContent = calibration.toFixed(2);
+    fontSizeInput.value = String(fontSize);
 
     render();
 
@@ -656,15 +927,37 @@
     timeDisplay.textContent = formatClock(headTimeMs) + ' / ' + formatClock(totalDurationMs(subs));
   }
 
+  // 9:16実寸プレビューを更新する(安全領域・縁取り・ベースライン位置・行数判定バッジ込み)。
   function renderPreview() {
-    if (editingText) return;
     var idx = currentClipIndex();
-    previewBox.innerHTML = '';
-    var div = document.createElement('div');
-    div.className = 'preview-text';
-    div.dir = 'rtl';
-    div.textContent = idx === -1 ? '' : subs[idx].text;
-    previewBox.appendChild(div);
+    var sub = idx === -1 ? null : subs[idx];
+    var widthPx = previewFrame.getBoundingClientRect().width || 320;
+
+    var fontPx = previewFontSizePx(fontSize, calibration, widthPx);
+    var strokePx = previewStrokeWidthPx(widthPx);
+    var baselinePx = previewBaselineOffsetPx(widthPx);
+    var margins = previewSafeMargins(widthPx);
+
+    previewSafeGuide.style.left = margins.left + 'px';
+    previewSafeGuide.style.right = margins.right + 'px';
+    previewSafeGuide.style.top = margins.top + 'px';
+    previewSafeGuide.style.bottom = margins.bottom + 'px';
+
+    previewSubtitleText.style.fontSize = fontPx + 'px';
+    previewSubtitleText.style.lineHeight = '1.3';
+    previewSubtitleText.style.webkitTextStroke = strokePx + 'px #000';
+    previewSubtitleText.style.paintOrder = 'stroke fill';
+    previewSubtitleText.style.bottom = baselinePx + 'px';
+    previewSubtitleText.textContent = sub ? sub.text : '';
+
+    previewTranslationText.textContent = sub ? sub.en : '';
+
+    if (sub) {
+      var judge = judgeLineCount(sub.text, SAFE_WIDTH_1080, measureTextWidth1080);
+      renderJudgeBadge(previewJudgeBadge, judge);
+    } else {
+      previewJudgeBadge.innerHTML = '';
+    }
   }
 
   // 再生ヘッド関連(位置・時刻表示・現在クリップ強調・プレビュー)をまとめて更新する。
@@ -715,6 +1008,10 @@
       textDiv.dir = 'rtl';
       textDiv.textContent = sub.text.replace(/\n/g, ' ');
 
+      var enDiv = document.createElement('div');
+      enDiv.className = 'clip-en';
+      enDiv.textContent = sub.en;
+
       var durDiv = document.createElement('div');
       durDiv.className = 'clip-dur';
       durDiv.textContent = (sub.durMs / 1000).toFixed(1) + 's';
@@ -723,6 +1020,7 @@
       handle.className = 'clip-handle';
 
       clip.appendChild(textDiv);
+      clip.appendChild(enDiv);
       clip.appendChild(durDiv);
       clip.appendChild(handle);
       frag.appendChild(clip);
@@ -906,62 +1204,70 @@
     scheduleSave();
   }
 
-  function startTextEdit(idx) {
+  // 編集モーダル内のプレビュー(アラビア語本文の生入力に追随してリアルタイム更新)。
+  function updateModalPreview() {
+    var arabicText = modalArabicText.value;
+    var widthPx = modalPreviewFrame.getBoundingClientRect().width || 200;
+
+    var fontPx = previewFontSizePx(fontSize, calibration, widthPx);
+    var strokePx = previewStrokeWidthPx(widthPx);
+    var baselinePx = previewBaselineOffsetPx(widthPx);
+    var margins = previewSafeMargins(widthPx);
+
+    modalSafeGuide.style.left = margins.left + 'px';
+    modalSafeGuide.style.right = margins.right + 'px';
+    modalSafeGuide.style.top = margins.top + 'px';
+    modalSafeGuide.style.bottom = margins.bottom + 'px';
+
+    modalPreviewSubtitleText.style.fontSize = fontPx + 'px';
+    modalPreviewSubtitleText.style.lineHeight = '1.3';
+    modalPreviewSubtitleText.style.webkitTextStroke = strokePx + 'px #000';
+    modalPreviewSubtitleText.style.paintOrder = 'stroke fill';
+    modalPreviewSubtitleText.style.bottom = baselinePx + 'px';
+    modalPreviewSubtitleText.textContent = arabicText;
+
+    var judge = judgeLineCount(arabicText, SAFE_WIDTH_1080, measureTextWidth1080);
+    renderJudgeBadge(modalJudgeBadge, judge);
+  }
+
+  function openEditModal(idx) {
     if (idx === -1) return;
-    editingText = true;
+    modalIndex = idx;
+    modalOpen = true;
     var sub = subs[idx];
-    var multiline = sub.text.indexOf('\n') !== -1;
-    previewBox.innerHTML = '';
-    var el = document.createElement(multiline ? 'textarea' : 'input');
-    el.className = 'preview-input';
-    el.dir = 'rtl';
-    if (multiline) {
-      el.rows = 2;
-      el.value = sub.text;
-    } else {
-      el.type = 'text';
-      el.value = sub.text;
-    }
-    previewBox.appendChild(el);
-    el.focus();
-    el.select();
+    modalArabicText.value = sub.text;
+    modalEnglishText.value = sub.en;
+    editModal.style.display = 'flex';
+    updateModalPreview();
+    modalArabicText.focus();
+  }
 
-    function commit() {
-      if (!editingText) return;
-      editingText = false;
-      var newText = el.value;
-      if (newText !== sub.text) {
-        history = pushHistory(history, subs);
-        var next = cloneSubs(subs);
-        next[idx].text = newText;
-        next[idx].edited = true;
-        subs = next;
-        setHint('テキストを編集しました');
-        renderTimeline();
-        scheduleSave();
-      } else {
-        renderPreview();
-      }
-    }
-    function cancel() {
-      editingText = false;
-      renderPreview();
-    }
+  function closeEditModal() {
+    editModal.style.display = 'none';
+    modalOpen = false;
+    modalIndex = -1;
+  }
 
-    el.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        commit();
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        cancel();
-      }
-    });
-    el.addEventListener('blur', commit);
+  function saveEditModal() {
+    if (modalIndex === -1) return;
+    var newText = modalArabicText.value;
+    var newEn = modalEnglishText.value;
+    var sub = subs[modalIndex];
+    if (newText !== sub.text || newEn !== sub.en) {
+      history = pushHistory(history, subs);
+      var next = cloneSubs(subs);
+      next[modalIndex].text = newText;
+      next[modalIndex].en = newEn;
+      next[modalIndex].edited = true;
+      subs = next;
+      setHint('テキストを編集しました');
+      renderTimeline();
+      scheduleSave();
+    }
+    closeEditModal();
   }
 
   function showEditor() {
-    editingText = false;
     stopPlayback();
     mode = 'edit';
     mainView.style.display = 'none';
@@ -975,21 +1281,25 @@
 
   function enterEditMode() {
     var text = textarea.value;
+    var translation = translationTextarea.value;
     var cps = parseFloat(cpsInput.value);
 
     if (hasTimelineState) {
-      if (textEquals(text, reconstructManuscript(subs))) {
+      var unchanged = textEquals(text, reconstructManuscript(subs)) &&
+        textEquals(translation, reconstructTranslation(subs));
+      if (unchanged) {
         showEditor();
         return;
       }
-      var ok = window.confirm('原稿が変更されています。タイムラインを再構築すると、手動調整した尺はリセットされます。よろしいですか？');
+      var ok = window.confirm('原稿または英訳が変更されています。タイムラインを再構築すると、手動調整した尺はリセットされます。よろしいですか？');
       if (!ok) return;
     }
 
     var segments = segmentManuscript(text);
     if (segments.length === 0) return;
 
-    subs = subsFromSegments(segments, cps);
+    var enLines = splitEnglishLines(translation);
+    subs = subsFromSegments(segments, cps, enLines);
     currentCps = (isFinite(cps) && cps > 0) ? cps : 12;
     history = [];
     headTimeMs = 0;
@@ -1000,6 +1310,7 @@
   function exitEditMode() {
     stopPlayback();
     textarea.value = reconstructManuscript(subs);
+    translationTextarea.value = reconstructTranslation(subs);
     mode = 'input';
     editorView.style.display = 'none';
     mainView.style.display = '';
@@ -1074,10 +1385,45 @@
     seekTo(pxToMs(offsetX, currentPxPerSec()));
   });
 
-  previewBox.addEventListener('dblclick', function () {
-    if (mode !== 'edit' || editingText) return;
+  previewFrame.addEventListener('dblclick', function () {
+    if (mode !== 'edit' || modalOpen) return;
     if (playing) stopPlayback();
-    startTextEdit(currentClipIndex());
+    openEditModal(currentClipIndex());
+  });
+
+  modalCancelBtn.addEventListener('click', closeEditModal);
+  modalSaveBtn.addEventListener('click', saveEditModal);
+  modalArabicText.addEventListener('input', updateModalPreview);
+  modalEnglishText.addEventListener('input', updateModalPreview);
+  modalAutoSplitBtn.addEventListener('click', function () {
+    modalArabicText.value = autoSplitToTwoLines(modalArabicText.value, measureTextWidth1080);
+    updateModalPreview();
+  });
+  modalCollapseBtn.addEventListener('click', function () {
+    modalArabicText.value = collapseToOneLine(modalArabicText.value);
+    updateModalPreview();
+  });
+  editModal.addEventListener('click', function (e) {
+    if (e.target === editModal) closeEditModal();
+  });
+  editModal.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeEditModal();
+    }
+  });
+
+  calibrationInput.addEventListener('input', function () {
+    calibration = clampCalibration(parseFloat(calibrationInput.value));
+    calibrationValue.textContent = calibration.toFixed(2);
+    renderPreview();
+    scheduleSave();
+  });
+  fontSizeInput.addEventListener('input', function () {
+    var v = parseFloat(fontSizeInput.value);
+    if (isFinite(v) && v > 0) fontSize = v;
+    renderPreview();
+    scheduleSave();
   });
 
   editorCps.addEventListener('input', function () {
@@ -1100,7 +1446,7 @@
   });
 
   document.addEventListener('keydown', function (e) {
-    if (mode !== 'edit' || editingText) return;
+    if (mode !== 'edit' || modalOpen) return;
 
     if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
       e.preventDefault();
@@ -1132,6 +1478,10 @@
 
   // ---- 入力モードの状態変更 -> 自動保存(300msデバウンス) ----
   textarea.addEventListener('input', function () {
+    render();
+    scheduleSave();
+  });
+  translationTextarea.addEventListener('input', function () {
     render();
     scheduleSave();
   });

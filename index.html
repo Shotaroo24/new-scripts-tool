@@ -23,6 +23,9 @@
     <label class="field-label" for="manuscript">原稿テキスト</label>
     <textarea id="manuscript" dir="rtl" spellcheck="false" placeholder="ここにアラビア語の原稿を貼り付けてください..."></textarea>
 
+    <label class="field-label" for="translation">英訳（1行 = 1クリップ、改行のみで分割）</label>
+    <textarea id="translation" class="translation-textarea" dir="ltr" spellcheck="false" placeholder="英訳を1行ずつ、アラビア語と同じ順番で入力してください..."></textarea>
+
     <div class="settings-row">
       <div class="field">
         <label class="field-label" for="cps">読み速度（cps）</label>
@@ -49,7 +52,8 @@
         <span class="stat-label">総尺</span>
       </div>
     </div>
-    <div id="emptyState">原稿を左に貼り付けると、分割結果がここにリアルタイムで表示されます。</div>
+    <div id="alignmentWarning" class="alignment-warning" style="display:none;"></div>
+    <div id="emptyState">原稿を左に貼り付けると、対応付け確認リストがここにリアルタイムで表示されます。</div>
     <div id="previewList" style="display:none;"></div>
   </section>
 </main>
@@ -76,13 +80,55 @@
     <div class="editor-hint" id="editorHint"></div>
   </div>
 
-  <div class="preview-box" id="previewBox"></div>
+  <div class="preview-stage" id="previewStage">
+    <div class="preview-frame" id="previewFrame">
+      <div class="safe-guide-box" id="previewSafeGuide"></div>
+      <div class="subtitle-text" id="previewSubtitleText"></div>
+    </div>
+    <div class="preview-translation" id="previewTranslationText"></div>
+    <div class="preview-judge" id="previewJudgeBadge"></div>
+    <div class="preview-controls">
+      <label>倍率(calibration)
+        <input type="range" id="calibrationInput" min="0.80" max="1.30" step="0.01" value="1">
+        <span id="calibrationValue">1.00</span>
+      </label>
+      <label>フォントサイズ
+        <input type="number" id="fontSizeInput" min="10" step="1" value="55">
+      </label>
+    </div>
+  </div>
 
   <div class="timeline-wrap" id="timelineWrap">
     <div class="timeline-inner" id="timelineInner">
       <div class="ruler" id="ruler"></div>
       <div class="clips-track" id="clipsTrack"></div>
       <div class="playhead" id="playhead"><div class="playhead-knob"></div></div>
+    </div>
+  </div>
+</div>
+
+<div id="editModal" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <h2>クリップを編集</h2>
+    <label class="field-label" for="modalArabicText">アラビア語本文</label>
+    <textarea id="modalArabicText" dir="rtl" rows="3"></textarea>
+    <label class="field-label" for="modalEnglishText">英訳</label>
+    <input id="modalEnglishText" type="text" dir="ltr">
+    <div class="modal-actions">
+      <button id="modalAutoSplitBtn" type="button" class="editor-btn">自動で2行に分割</button>
+      <button id="modalCollapseBtn" type="button" class="editor-btn">1行に戻す</button>
+    </div>
+    <p class="modal-note">この操作は尺(表示時間)を変更しません。</p>
+    <div class="modal-preview-wrap">
+      <div class="preview-frame small" id="modalPreviewFrame">
+        <div class="safe-guide-box" id="modalSafeGuide"></div>
+        <div class="subtitle-text" id="modalPreviewSubtitleText"></div>
+      </div>
+      <div class="modal-judge" id="modalJudgeBadge"></div>
+    </div>
+    <div class="modal-footer">
+      <button id="modalCancelBtn" type="button" class="secondary-btn">キャンセル</button>
+      <button id="modalSaveBtn" type="button" class="editor-btn primary-btn">保存</button>
     </div>
   </div>
 </div>
