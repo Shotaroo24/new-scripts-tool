@@ -1,100 +1,23 @@
-'use strict';
-
-// logic.js(純粋ロジックのみのファイル)をそのまま実行して回帰テストする。
-// (ロジックをここに複製すると logic.js との乖離が起きるため、
-//  logic.js の内容をまるごと読み込んで実行する)
+// src/core/* を直接importして回帰テストする。
 //
 // 実行方法: node tests/logic.test.js
 
-var fs = require('fs');
-var path = require('path');
-
-var logicJsPath = path.join(__dirname, '..', 'logic.js');
-var pureLogicSource = fs.readFileSync(logicJsPath, 'utf8');
-
-var lib = new Function(
-  pureLogicSource +
-  '\nreturn { segmentManuscript: segmentManuscript, buildCues: buildCues, ' +
-  'formatSrtTime: formatSrtTime, formatTotalDuration: formatTotalDuration, ' +
-  'buildSrt: buildSrt, subsFromSegments: subsFromSegments, ' +
-  'computeStartsMs: computeStartsMs, totalDurationMs: totalDurationMs, clipAt: clipAt, ' +
-  'setClipDuration: setClipDuration, trimClipAtHead: trimClipAtHead, ' +
-  'mergeClipAt: mergeClipAt, deleteClipAt: deleteClipAt, ' +
-  'recalcUneditedDurations: recalcUneditedDurations, subsToCues: subsToCues, ' +
-  'reconstructManuscript: reconstructManuscript, reconstructTranslation: reconstructTranslation, ' +
-  'textEquals: textEquals, ' +
-  'pushHistory: pushHistory, popHistory: popHistory, charCountForText: charCountForText, ' +
-  'formatClock: formatClock, ZOOM_LEVELS: ZOOM_LEVELS, msToPx: msToPx, pxToMs: pxToMs, ' +
-  'pickTickIntervalSec: pickTickIntervalSec, clampZoomIndex: clampZoomIndex, ' +
-  'isValidSessionData: isValidSessionData, serializeSession: serializeSession, ' +
-  'deserializeSession: deserializeSession, MIN_DUR_MS: MIN_DUR_MS, ' +
-  'splitEnglishLines: splitEnglishLines, buildAlignmentWarning: buildAlignmentWarning, ' +
-  'rowMismatchMessage: rowMismatchMessage, shiftEnglishDown: shiftEnglishDown, ' +
-  'compactEnglish: compactEnglish, findBestSplit: findBestSplit, judgeLineCount: judgeLineCount, ' +
-  'autoSplitToTwoLines: autoSplitToTwoLines, collapseToOneLine: collapseToOneLine, ' +
-  'measurementFontSize: measurementFontSize, previewFontSizePx: previewFontSizePx, ' +
-  'previewStrokeWidthPx: previewStrokeWidthPx, previewBaselineOffsetPx: previewBaselineOffsetPx, ' +
-  'previewSafeMargins: previewSafeMargins, clampCalibration: clampCalibration, ' +
-  'SAFE_WIDTH_1080: SAFE_WIDTH_1080, CANVAS_BASE_WIDTH: CANVAS_BASE_WIDTH, ' +
-  'STROKE_WIDTH_AT_1080: STROKE_WIDTH_AT_1080, SUBTITLE_BASELINE_FROM_BOTTOM: SUBTITLE_BASELINE_FROM_BOTTOM, ' +
-  'FONT_SIZE_DEFAULT: FONT_SIZE_DEFAULT, CALIBRATION_DEFAULT: CALIBRATION_DEFAULT, ' +
-  'CALIBRATION_MIN: CALIBRATION_MIN, CALIBRATION_MAX: CALIBRATION_MAX };'
-)();
-
-var segmentManuscript = lib.segmentManuscript;
-var buildCues = lib.buildCues;
-var formatSrtTime = lib.formatSrtTime;
-var formatTotalDuration = lib.formatTotalDuration;
-var buildSrt = lib.buildSrt;
-var subsFromSegments = lib.subsFromSegments;
-var computeStartsMs = lib.computeStartsMs;
-var totalDurationMs = lib.totalDurationMs;
-var clipAt = lib.clipAt;
-var setClipDuration = lib.setClipDuration;
-var trimClipAtHead = lib.trimClipAtHead;
-var mergeClipAt = lib.mergeClipAt;
-var deleteClipAt = lib.deleteClipAt;
-var recalcUneditedDurations = lib.recalcUneditedDurations;
-var subsToCues = lib.subsToCues;
-var reconstructManuscript = lib.reconstructManuscript;
-var reconstructTranslation = lib.reconstructTranslation;
-var textEquals = lib.textEquals;
-var pushHistory = lib.pushHistory;
-var popHistory = lib.popHistory;
-var charCountForText = lib.charCountForText;
-var formatClock = lib.formatClock;
-var ZOOM_LEVELS = lib.ZOOM_LEVELS;
-var msToPx = lib.msToPx;
-var pxToMs = lib.pxToMs;
-var pickTickIntervalSec = lib.pickTickIntervalSec;
-var clampZoomIndex = lib.clampZoomIndex;
-var isValidSessionData = lib.isValidSessionData;
-var serializeSession = lib.serializeSession;
-var deserializeSession = lib.deserializeSession;
-var MIN_DUR_MS = lib.MIN_DUR_MS;
-var splitEnglishLines = lib.splitEnglishLines;
-var buildAlignmentWarning = lib.buildAlignmentWarning;
-var rowMismatchMessage = lib.rowMismatchMessage;
-var shiftEnglishDown = lib.shiftEnglishDown;
-var compactEnglish = lib.compactEnglish;
-var findBestSplit = lib.findBestSplit;
-var judgeLineCount = lib.judgeLineCount;
-var autoSplitToTwoLines = lib.autoSplitToTwoLines;
-var collapseToOneLine = lib.collapseToOneLine;
-var measurementFontSize = lib.measurementFontSize;
-var previewFontSizePx = lib.previewFontSizePx;
-var previewStrokeWidthPx = lib.previewStrokeWidthPx;
-var previewBaselineOffsetPx = lib.previewBaselineOffsetPx;
-var previewSafeMargins = lib.previewSafeMargins;
-var clampCalibration = lib.clampCalibration;
-var SAFE_WIDTH_1080 = lib.SAFE_WIDTH_1080;
-var CANVAS_BASE_WIDTH = lib.CANVAS_BASE_WIDTH;
-var STROKE_WIDTH_AT_1080 = lib.STROKE_WIDTH_AT_1080;
-var SUBTITLE_BASELINE_FROM_BOTTOM = lib.SUBTITLE_BASELINE_FROM_BOTTOM;
-var FONT_SIZE_DEFAULT = lib.FONT_SIZE_DEFAULT;
-var CALIBRATION_DEFAULT = lib.CALIBRATION_DEFAULT;
-var CALIBRATION_MIN = lib.CALIBRATION_MIN;
-var CALIBRATION_MAX = lib.CALIBRATION_MAX;
+import { segmentManuscript, buildCues } from '../src/core/segment.js';
+import { formatSrtTime, formatTotalDuration, formatClock, MIN_DUR_MS, computeStartsMs, totalDurationMs, clipAt, ZOOM_LEVELS, msToPx, pxToMs, pickTickIntervalSec, clampZoomIndex } from '../src/core/time.js';
+import { buildSrt } from '../src/core/srt.js';
+import {
+  subsFromSegments, setClipDuration, trimClipAtHead, mergeClipAt, deleteClipAt,
+  recalcUneditedDurations, subsToCues, reconstructManuscript, reconstructTranslation,
+  textEquals, pushHistory, popHistory, charCountForText,
+  splitEnglishLines, buildAlignmentWarning, rowMismatchMessage, shiftEnglishDown, compactEnglish
+} from '../src/core/subs.js';
+import {
+  findBestSplit, judgeLineCount, autoSplitToTwoLines, collapseToOneLine,
+  measurementFontSize, previewFontSizePx, previewStrokeWidthPx, previewBaselineOffsetPx, previewSafeMargins,
+  clampCalibration, SAFE_WIDTH_1080, CANVAS_BASE_WIDTH, STROKE_WIDTH_AT_1080, SUBTITLE_BASELINE_FROM_BOTTOM,
+  FONT_SIZE_DEFAULT, CALIBRATION_DEFAULT, CALIBRATION_MIN, CALIBRATION_MAX
+} from '../src/core/style.js';
+import { isValidSessionData, serializeSession, deserializeSession } from '../src/core/session.js';
 
 var passCount = 0;
 var failCount = 0;

@@ -2,11 +2,11 @@
 
 アラビア語の原稿テキストをブラウザに貼り付けると、Filmora読み込み用のSRT字幕ファイルをダウンロードできるツールです。
 
-詳細な仕様は [`srtgen-web-spec.md`](./srtgen-web-spec.md) を参照してください。
+詳細な仕様は [`docs/srtgen-web-spec.md`](./docs/srtgen-web-spec.md) を参照してください。
 
 ## 使い方
 
-1. `index.html` をブラウザで開く（ダブルクリックでも、静的ホスティング上でも同じように動作します）
+1. `index.html` をローカルサーバー経由（例: `npx serve` や `python -m http.server`）または静的ホスティング上で開く（ES Modules を使用しているため `file://` の直接ダブルクリック起動は非対応です）
 2. 左側のテキストエリアにアラビア語の原稿を貼り付ける
 3. 右側にリアルタイムで分割結果・タイムコードのプレビューが表示される
 4. 必要なら「読み速度（cps）」「BOM付き出力」を設定
@@ -16,7 +16,10 @@
 
 ## 技術構成
 
-- `index.html` 1枚のみで完結（HTML / CSS / Vanilla JavaScript を内包）
+- `index.html` から ES Modules（`<script type="module">`）で `src/app.js` を読み込む構成
+  - `src/core/` … 純粋ロジック（DOM非依存、Node上でテスト可能）
+  - `src/ui/` … DOM wiring（原稿モード・タイムライン編集モード）
+  - `src/app.js` … エントリポイント（状態の保持と各モジュールの配線）
 - フレームワーク・ビルドステップ・外部ライブラリ・CDN依存なし
 - 対応ブラウザ: モダンブラウザ（Chrome / Edge / Safari）
 
@@ -32,7 +35,7 @@
 
 ## テスト
 
-`tests/logic.test.js` は `index.html` 内の分割・タイムコード算出ロジックをそのまま抽出して実行する回帰テストです（ロジックの二重管理を避けるため、コードを複製せず `index.html` から読み込んで実行します）。`index.html` を編集した際は、以下のコマンドで仕様書第8節の受け入れテスト相当の項目が壊れていないか確認してください。
+`tests/logic.test.js` は `src/core/*` を直接importして実行する回帰テストです。`src/core/` 配下を編集した際は、以下のコマンドで仕様書第8節の受け入れテスト相当の項目が壊れていないか確認してください。
 
 ```
 node tests/logic.test.js
