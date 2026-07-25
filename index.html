@@ -81,9 +81,23 @@
       <span class="master-status" id="masterStatus"></span>
     </div>
     <span class="editor-sep"></span>
+    <div class="timeline-json-control">
+      <button id="saveTimelineJsonBtn" class="editor-btn" type="button">JSON保存</button>
+      <button id="loadTimelineJsonBtn" class="editor-btn" type="button">JSON読み込み</button>
+      <input type="file" id="timelineJsonFileInput" accept="application/json" style="display:none;">
+    </div>
+    <span class="editor-sep"></span>
+    <button id="exportMp4Btn" class="editor-btn primary-btn" type="button" disabled>MP4書き出し</button>
+    <span class="editor-sep"></span>
     <button id="backBtn" class="editor-btn secondary-btn">原稿に戻る</button>
     <button id="downloadEditorBtn" class="editor-btn primary-btn">SRTダウンロード</button>
     <div class="editor-hint" id="editorHint"></div>
+  </div>
+
+  <div class="export-progress-row" id="exportProgressRow" style="display:none;">
+    <progress id="exportProgressBar" max="1" value="0"></progress>
+    <span id="exportProgressText"></span>
+    <button id="exportCancelBtn" class="editor-btn" type="button">キャンセル</button>
   </div>
 
   <div class="preview-stage" id="previewStage">

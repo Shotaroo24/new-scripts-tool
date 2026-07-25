@@ -1,11 +1,12 @@
-// src/core/videotrack.js の回帰テスト(仕様書 docs/srtgen-video-spec.md §7-1〜4)。
+// src/core/videotrack.js の回帰テスト(仕様書 docs/srtgen-video-spec.md §7-1〜5)。
 //
 // 実行方法: node tests/videotrack.test.js
 
-import { MIN_DUR_MS, computeStartsMs, totalDurationMs } from '../src/core/time.js';
+import { MIN_DUR_MS, computeStartsMs, totalDurationMs, clipAt } from '../src/core/time.js';
 import {
   initialSegments, outputToSrc, rippleSubsForRange,
-  splitSegmentAt, deleteSegmentRipple, resizeSegmentOut, resizeSegmentIn
+  splitSegmentAt, deleteSegmentRipple, resizeSegmentOut, resizeSegmentIn,
+  frameTimestampsMs
 } from '../src/core/videotrack.js';
 import { pushHistory, popHistory } from '../src/core/subs.js';
 
@@ -228,6 +229,76 @@ function isIntegerMs(v) {
     JSON.stringify(result.subs) !== JSON.stringify(subs) || JSON.stringify(result.segments) !== JSON.stringify(segments),
     '#R4 操作後は状態が変化している(復元対象があることの確認)'
   );
+})();
+
+// --- §7-5: フレーム導出 ---
+// 30fps・複数区間で、隣接フレームのソース参照に隙間・重複が生じないこと(累積導出の検証)。
+(function () {
+  var segments = [
+    { srcInMs: 1000, durMs: 900 },  // 出力[0,900)
+    { srcInMs: 5000, durMs: 1000 }, // 出力[900,1900)
+    { srcInMs: 9000, durMs: 767 }   // 出力[1900,2667)
+  ];
+  var totalMs = totalDurationMs(segments); // 2667
+  var fps = 30;
+  var frameTimes = frameTimestampsMs(totalMs, fps);
+
+  // フレーム間隔は常にちょうど1000/30ms(区間ごとの個別丸めをしていないため累積誤差が出ない)
+  var intervalOk = true;
+  for (var i = 1; i < frameTimes.length; i++) {
+    if (Math.abs((frameTimes[i] - frameTimes[i - 1]) - 1000 / fps) > 1e-9) { intervalOk = false; break; }
+  }
+  assert(intervalOk, '#5 フレーム間隔が常に1000/30msちょうど(区間ごとの個別丸めをしていない)');
+  assert(frameTimes[0] === 0, '#5 最初のフレームの出力時刻は0');
+
+  var frameCount = Math.round(totalMs * fps / 1000);
+  assert(frameTimes.length === frameCount, '#5 フレーム数がround(総尺*fps/1000)と一致 -> ' + frameTimes.length);
+
+  var starts = computeStartsMs(segments);
+  var srcRefs = frameTimes.map(function (t) { return outputToSrc(segments, t); });
+
+  // 各フレームのソース参照が、所属区間から隙間なく導出されていること
+  var derivationOk = true;
+  for (var j = 0; j < frameTimes.length; j++) {
+    var t = Math.round(frameTimes[j]);
+    var segIdx = clipAt(segments, t);
+    var expectedSrc = segments[segIdx].srcInMs + (t - starts[segIdx]);
+    if (srcRefs[j] !== expectedSrc) { derivationOk = false; break; }
+  }
+  assert(derivationOk, '#5 各フレームのソース参照が所属区間の累積開始位置から隙間なく導出される');
+
+  // 同一区間内で連続するフレームは、ソース参照の差分が出力時刻の差分とちょうど一致する(隙間・重複なし)。
+  // 区間境界をまたぐ場合はソース参照が不連続に飛ぶのが正しい挙動(ジャンプカット)なので対象外にする。
+  var withinSegmentMonotonic = true;
+  for (var m = 1; m < frameTimes.length; m++) {
+    var prevT = Math.round(frameTimes[m - 1]);
+    var curT = Math.round(frameTimes[m]);
+    if (clipAt(segments, prevT) === clipAt(segments, curT)) {
+      var deltaOut = curT - prevT;
+      var deltaSrc = srcRefs[m] - srcRefs[m - 1];
+      if (deltaSrc !== deltaOut) { withinSegmentMonotonic = false; break; }
+    }
+  }
+  assert(withinSegmentMonotonic, '#5 同一区間内では連続フレームのソース参照差分が出力時刻の差分と厳密一致(隙間・重複なし)');
+
+  // 区間境界をまたぐフレーム対が少なくとも1組はサンプルに含まれていること(検証の有効性確認)
+  var crossesBoundary = false;
+  for (var n = 1; n < frameTimes.length; n++) {
+    if (clipAt(segments, Math.round(frameTimes[n - 1])) !== clipAt(segments, Math.round(frameTimes[n]))) { crossesBoundary = true; break; }
+  }
+  assert(crossesBoundary, '#5 前提: サンプルに区間境界をまたぐフレーム対が含まれる');
+})();
+
+// 単一区間(カットなし)の場合、フレーム導出はsrcInMsを起点に単純な等間隔になること
+(function () {
+  var segments = [{ srcInMs: 2000, durMs: 1000 }];
+  var frameTimes = frameTimestampsMs(totalDurationMs(segments), 30);
+  var srcRefs = frameTimes.map(function (t) { return outputToSrc(segments, t); });
+  var ok = true;
+  for (var i = 0; i < frameTimes.length; i++) {
+    if (srcRefs[i] !== 2000 + Math.round(frameTimes[i])) { ok = false; break; }
+  }
+  assert(ok, '#5b 単一区間ではソース参照が出力時刻+srcInMsに一致する');
 })();
 
 console.log('');

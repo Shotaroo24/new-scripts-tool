@@ -5,6 +5,7 @@ import {
   initialSegments, outputToSrc, splitSegmentAt, deleteSegmentRipple,
   resizeSegmentIn, resizeSegmentOut
 } from '../core/videotrack.js';
+import { checkMasterDecodability } from '../export/mp4.js';
 
 var videoTrackRow = document.getElementById('videoTrackRow');
 var videoTrack = document.getElementById('videoTrack');
@@ -16,6 +17,7 @@ var masterVideoEl = document.getElementById('masterVideoEl');
 
 var segments = [];
 var master = null; // { fileName, durationMs, width, height } | null
+var masterFile = null; // 選択された生のFile(書き出しでmediabunnyに渡すために保持する)
 var masterVideoUrl = null;
 var focused = false;
 var dragState = null;
@@ -50,6 +52,9 @@ export function getSegments() {
 export function getVideoElement() {
   return masterVideoEl;
 }
+export function getMasterFile() {
+  return masterFile;
+}
 export function isFocused() {
   return focused;
 }
@@ -83,6 +88,12 @@ export function updateCurrentHighlight() {
 export function setFocused(value) {
   focused = value;
   videoTrackRow.classList.toggle('focused', focused);
+}
+
+// 書き出し中は動画トラックの操作(マスター読み込み・区間ドラッグ)をロックする(§5.2-4)。
+export function setLocked(locked) {
+  masterLoadBtn.disabled = locked;
+  videoTrack.style.pointerEvents = locked ? 'none' : '';
 }
 
 function formatDurationForWarning(ms) {
@@ -133,13 +144,6 @@ function waitForCanPlay(videoEl) {
   });
 }
 
-// §4.3: 音声トラックの有無。判定できない場合はnull(警告は出さない)。
-function detectAudioTrack(videoEl) {
-  if (videoEl.audioTracks) return videoEl.audioTracks.length > 0;
-  if (typeof videoEl.mozHasAudio === 'boolean') return videoEl.mozHasAudio;
-  return null;
-}
-
 async function loadMasterFile(file) {
   showMasterWarnings(null);
   var url = URL.createObjectURL(file);
@@ -160,31 +164,27 @@ async function loadMasterFile(file) {
   var height = probe.videoHeight;
   var warnings = [];
 
-  // §4.3: WebCodecsでのデコード可否(簡易チェック)。
-  // 既知の制約: コンテナ/コーデック文字列を実ファイルから解析するデマルチプレクサを
-  // 導入していない(mediabunny導入はPhase2)ため、一般的なH.264構成が対応しているかの
-  // 目安チェックに留める。個々のファイルの実コーデックとは異なる場合がある。
-  if (!window.VideoDecoder) {
-    warnings.push('このブラウザはWebCodecsに対応していないため、将来の書き出し機能が使用できません。');
-  } else {
-    try {
-      var support = await VideoDecoder.isConfigSupported({ codec: 'avc1.42E01E' });
-      if (!support.supported) {
-        warnings.push('この環境はハードウェアデコードに対応していない可能性があります。プレビューは動作しますが、書き出し時に問題が起きる場合があります。');
-      }
-    } catch (err) {
-      // 判定不能な場合は警告しない
+  // §4.3: mediabunnyのデマルチプレクサで実ファイルのトラック/コーデックを読み取り、
+  // WebCodecsでのデコード可否・音声トラックの有無を判定する(推測でのコーデック
+  // 文字列チェックではなく、実ファイルベースの判定)。
+  try {
+    var decodability = await checkMasterDecodability(file);
+    if (!decodability.videoDecodable) {
+      warnings.push('この環境は映像コーデックのデコードに対応していない可能性があります。プレビューは動作しますが、書き出し時に問題が起きる場合があります。');
     }
-  }
-
-  var hasAudio = detectAudioTrack(probe);
-  if (hasAudio === false) {
-    warnings.push('音声トラックが検出されませんでした。音声なしで書き出されます。');
+    if (!decodability.hasAudioTrack) {
+      warnings.push('音声トラックが検出されませんでした。音声なしで書き出されます。');
+    } else if (decodability.audioDecodable === false) {
+      warnings.push('この環境は音声コーデックのデコードに対応していない可能性があります。書き出し時に問題が起きる場合があります。');
+    }
+  } catch (err) {
+    warnings.push('マスターのコーデック情報を読み取れませんでした。書き出し時に問題が起きる可能性があります。');
   }
 
   if (masterVideoUrl) URL.revokeObjectURL(masterVideoUrl);
   masterVideoUrl = url;
   masterVideoEl.src = url;
+  masterFile = file;
 
   if (pendingRestoreMaster) {
     if (pendingRestoreMaster.durationMs !== durationMs) {
@@ -388,6 +388,24 @@ export function setStateFromSession(data) {
     segments = [];
   }
   master = null;
+  masterFile = null;
+  videoTrackRow.style.display = 'none';
+  updateMasterStatusUI();
+}
+
+// timeline.json読み込み(§5.4)。localStorage復元と同じく、動画ファイル本体は
+// timeline.jsonに含まれないため再選択待ちの状態にする(尺一致チェックはファイル
+// 再選択時、loadMasterFile内で行う)。
+export function applyTimelineJson(masterData, segmentsData) {
+  if (masterData) {
+    pendingRestoreMaster = { fileName: masterData.fileName, durationMs: masterData.durationMs };
+    segments = segmentsData.map(function (s) { return { srcInMs: s.srcInMs, durMs: s.durMs }; });
+  } else {
+    pendingRestoreMaster = null;
+    segments = [];
+  }
+  master = null;
+  masterFile = null;
   videoTrackRow.style.display = 'none';
   updateMasterStatusUI();
 }

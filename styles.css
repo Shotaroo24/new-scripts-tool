@@ -501,10 +501,24 @@ button.secondary-btn:disabled {
 .segment-handle:hover {
   background: rgba(26, 127, 55, 0.25);
 }
-.master-control {
+.master-control,
+.timeline-json-control {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.export-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--panel-border);
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.export-progress-row progress {
+  width: 240px;
+  height: 10px;
 }
 .master-status {
   font-size: 12px;

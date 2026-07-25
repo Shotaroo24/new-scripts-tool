@@ -18,6 +18,7 @@ import {
   FONT_SIZE_DEFAULT, CALIBRATION_DEFAULT, CALIBRATION_MIN, CALIBRATION_MAX
 } from '../src/core/style.js';
 import { isValidSessionData, serializeSession, deserializeSession } from '../src/core/session.js';
+import { serializeTimelineJson, deserializeTimelineJson } from '../src/core/session.js';
 
 var passCount = 0;
 var failCount = 0;
@@ -718,6 +719,76 @@ function makeSubs(dursMs) {
       segments: 'not-an-array'
     })) === null,
     '#local3 segmentsが配列でない場合はnullを返す'
+  );
+})();
+
+// --- §7-6: timeline.json ラウンドトリップ・version不一致の拒否 ---
+(function () {
+  var state = {
+    master: { fileName: 'master_capcut.mp4', durationMs: 67000 },
+    segments: [{ srcInMs: 0, durMs: 16000 }, { srcInMs: 20000, durMs: 5000 }],
+    subs: [
+      { text: 'مرحبا', durMs: 1270, edited: true, delim: '', en: 'Hello' },
+      { text: 'كيف حالك', durMs: 900, edited: false, delim: '؟', en: 'How are you' }
+    ],
+    cps: 12,
+    style: { fontSize: 55, calibration: 1.0 }
+  };
+  var raw = serializeTimelineJson(state);
+  var restored = deserializeTimelineJson(raw);
+
+  assert(restored !== null, '#7-6 正常なtimeline.jsonはシリアライズ/デシリアライズを往復できる');
+  assert(restored.version === 1, '#7-6 versionが1で保存される');
+  assert(
+    JSON.stringify(restored.segments) === JSON.stringify(state.segments),
+    '#7-6 segmentsが完全一致する -> ' + JSON.stringify(restored.segments)
+  );
+  assert(
+    JSON.stringify(restored.subs) === JSON.stringify(state.subs),
+    '#7-6 subsが完全一致する -> ' + JSON.stringify(restored.subs)
+  );
+  assert(restored.cps === state.cps, '#7-6 cpsが完全一致する');
+  assert(
+    restored.style.fontSize === state.style.fontSize && restored.style.calibration === state.style.calibration,
+    '#7-6 styleが完全一致する'
+  );
+  assert(
+    restored.master.fileName === state.master.fileName && restored.master.durationMs === state.master.durationMs,
+    '#7-6 masterが完全一致する'
+  );
+
+  // マスター未読み込み(master:null, segments:[])のtimeline.jsonも往復できる
+  var noMasterState = Object.assign({}, state, { master: null, segments: [] });
+  var restoredNoMaster = deserializeTimelineJson(serializeTimelineJson(noMasterState));
+  assert(restoredNoMaster !== null && restoredNoMaster.master === null, '#7-6 マスター未読み込みのtimeline.jsonも往復できる');
+  assert(restoredNoMaster.segments.length === 0, '#7-6 マスター未読み込みではsegmentsが空配列になる');
+
+  // version不一致は読み込み拒否
+  assert(
+    deserializeTimelineJson(JSON.stringify(Object.assign({}, JSON.parse(raw), { version: 2 }))) === null,
+    '#7-6 version不一致のtimeline.jsonは読み込み拒否されnullを返す'
+  );
+  assert(deserializeTimelineJson('{"version":1}') === null, '#7-6 必須フィールド欠落時はnullを返す');
+  assert(deserializeTimelineJson('これはJSONではない') === null, '#7-6 JSONパース失敗時はnullを返す(例外を投げない)');
+  assert(deserializeTimelineJson('null') === null, '#7-6 nullの場合はnullを返す');
+
+  // subs内の型不正は拒否(session.jsのisValidClipsを共有していることの確認)
+  assert(
+    deserializeTimelineJson(JSON.stringify({
+      version: 1, master: null, segments: [],
+      subs: [{ text: 'x', durMs: 'not-a-number', edited: false, delim: '', en: '' }],
+      cps: 12, style: { fontSize: 55, calibration: 1 }
+    })) === null,
+    '#7-6 subs内の型不正はnullを返す'
+  );
+
+  // masterとsegmentsのバリデーションもlocalStorageセッションと共有していることの確認
+  assert(
+    deserializeTimelineJson(JSON.stringify({
+      version: 1, master: { fileName: 'a.mp4' }, segments: [],
+      subs: [], cps: 12, style: { fontSize: 55, calibration: 1 }
+    })) === null,
+    '#7-6 masterのdurationMs欠落はnullを返す'
   );
 })();
 

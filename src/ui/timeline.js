@@ -2,7 +2,7 @@
 
 import {
   ZOOM_LEVELS, DEFAULT_ZOOM_INDEX, clipAt, computeStartsMs, totalDurationMs,
-  formatClock, clampZoomIndex, msToPx, pxToMs, pickTickIntervalSec
+  formatClock, clampZoomIndex, msToPx, pxToMs, pickTickIntervalSec, pad
 } from '../core/time.js';
 import { segmentManuscript } from '../core/segment.js';
 import {
@@ -11,6 +11,8 @@ import {
   pushHistory, popHistory, splitEnglishLines
 } from '../core/subs.js';
 import { buildSrt } from '../core/srt.js';
+import { serializeTimelineJson, deserializeTimelineJson } from '../core/session.js';
+import { exportMp4 } from '../export/mp4.js';
 import {
   CANVAS_BASE_WIDTH, SAFE_WIDTH_1080, STROKE_WIDTH_AT_1080, FONT_SIZE_DEFAULT,
   CALIBRATION_DEFAULT, CALIBRATION_MIN, CALIBRATION_MAX, CALIBRATION_STEP,
@@ -53,6 +55,14 @@ var subtitleTrackRow = document.getElementById('subtitleTrackRow');
 var clipsTrack = document.getElementById('clipsTrack');
 var playhead = document.getElementById('playhead');
 var previewCanvas = document.getElementById('previewCanvas');
+var exportMp4Btn = document.getElementById('exportMp4Btn');
+var exportProgressRow = document.getElementById('exportProgressRow');
+var exportProgressBar = document.getElementById('exportProgressBar');
+var exportProgressText = document.getElementById('exportProgressText');
+var exportCancelBtn = document.getElementById('exportCancelBtn');
+var saveTimelineJsonBtn = document.getElementById('saveTimelineJsonBtn');
+var loadTimelineJsonBtn = document.getElementById('loadTimelineJsonBtn');
+var timelineJsonFileInput = document.getElementById('timelineJsonFileInput');
 
 var editModal = document.getElementById('editModal');
 var modalArabicText = document.getElementById('modalArabicText');
@@ -85,6 +95,8 @@ var calibration = CALIBRATION_DEFAULT;
 var fontSize = FONT_SIZE_DEFAULT;
 var focusedTrack = 'subtitle'; // 'subtitle' | 'video'(§3.1、マスター未読み込み時は常にsubtitle)
 var VIDEO_SYNC_TOLERANCE_MS = 150;
+var editingLocked = false; // 書き出し中は編集操作をロックする(§5.2-4)
+var exportAbortController = null;
 
 var onChangeCallback = function () {};
 
@@ -728,6 +740,141 @@ function setZoom(newIndex) {
 function zoomIn() { setZoom(zoomIndex + 1); }
 function zoomOut() { setZoom(zoomIndex - 1); }
 
+function refreshExportButtonState() {
+  exportMp4Btn.disabled = editingLocked || !videotrackUI.hasMaster();
+}
+
+// 書き出し中は編集操作をロックする(§5.2-4)。タイムライン全体のポインタ操作も無効化する。
+function lockEditing(locked) {
+  editingLocked = locked;
+  sBtn.disabled = locked;
+  mBtn.disabled = locked;
+  undoBtn.disabled = locked;
+  backBtn.disabled = locked;
+  downloadEditorBtn.disabled = locked || subs.length === 0;
+  saveTimelineJsonBtn.disabled = locked;
+  loadTimelineJsonBtn.disabled = locked;
+  timelineWrap.style.pointerEvents = locked ? 'none' : '';
+  videotrackUI.setLocked(locked);
+  refreshExportButtonState();
+}
+
+function downloadBlob(blob, fileNamePrefix, ext) {
+  var url = URL.createObjectURL(blob);
+  var now = new Date();
+  var fname = fileNamePrefix + '_' +
+    now.getFullYear() + pad(now.getMonth() + 1, 2) + pad(now.getDate(), 2) + '_' +
+    pad(now.getHours(), 2) + pad(now.getMinutes(), 2) + '.' + ext;
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = fname;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+}
+
+// MP4書き出し(§5.1-5.2)。進捗はフレーム数ベースで更新し、キャンセル可能にする。
+async function handleExportClick() {
+  if (editingLocked || !videotrackUI.hasMaster()) return;
+  var masterFile = videotrackUI.getMasterFile();
+  if (!masterFile) {
+    setHint('マスターファイルが利用できません。読み込み直してください。');
+    return;
+  }
+
+  lockEditing(true);
+  exportProgressRow.style.display = '';
+  exportProgressBar.value = 0;
+  exportProgressText.textContent = '音声を処理中...';
+  var controller = new AbortController();
+  exportAbortController = controller;
+
+  try {
+    var blob = await exportMp4({
+      masterFile: masterFile,
+      segments: videotrackUI.getSegments(),
+      subs: subs,
+      fontSize: fontSize,
+      calibration: calibration,
+      signal: controller.signal,
+      onProgress: function (p) {
+        if (p.phase === 'audio') {
+          exportProgressText.textContent = '音声を処理中... ' + Math.round(p.ratio * 100) + '%';
+        } else {
+          exportProgressBar.value = p.ratio;
+          exportProgressText.textContent = '映像を書き出し中... ' + Math.round(p.ratio * 100) + '%';
+        }
+      }
+    });
+    downloadBlob(blob, 'video', 'mp4');
+    setHint('MP4書き出しが完了しました');
+  } catch (err) {
+    if (err && err.name === 'AbortError') {
+      setHint('書き出しをキャンセルしました');
+    } else {
+      setHint('書き出しに失敗しました: ' + (err && err.message ? err.message : String(err)));
+    }
+  } finally {
+    exportAbortController = null;
+    exportProgressRow.style.display = 'none';
+    lockEditing(false);
+  }
+}
+
+// timeline.json保存(§5.4)。master/segments/subs/cps/styleのみを対象とする
+// (原稿テキスト・翻訳・モード・ズーム等はlocalStorageセッションの管轄で、timeline.jsonには含めない)。
+function saveTimelineJson() {
+  var raw = serializeTimelineJson({
+    master: videotrackUI.getMaster(),
+    segments: videotrackUI.getSegments(),
+    subs: subs,
+    cps: currentCps,
+    style: { fontSize: fontSize, calibration: calibration }
+  });
+  downloadBlob(new Blob([raw], { type: 'application/json' }), 'timeline', 'json');
+}
+
+// timeline.json読み込み(§5.4)。version不一致・スキーマ不正は読み込み拒否する。
+// マスター本体はJSONに含まれないため、videotrackUI側で再選択待ちの状態にする。
+function loadTimelineJsonFile(file) {
+  var reader = new FileReader();
+  reader.onload = function () {
+    var data = deserializeTimelineJson(String(reader.result));
+    if (!data) {
+      setHint('timeline.jsonの読み込みに失敗しました(バージョン不一致または形式不正)');
+      return;
+    }
+
+    history = [];
+    subs = data.subs.map(function (c) {
+      return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited, en: c.en };
+    });
+    hasTimelineState = subs.length > 0;
+    currentCps = data.cps;
+    editorCps.value = String(currentCps);
+    editorCpsValue.textContent = String(currentCps);
+    cpsInput.value = String(currentCps);
+    calibration = clampCalibration(data.style.calibration);
+    fontSize = data.style.fontSize;
+    calibrationInput.value = String(calibration);
+    calibrationValue.textContent = calibration.toFixed(2);
+    fontSizeInput.value = String(fontSize);
+
+    var total = totalDurationMs(subs);
+    if (headTimeMs > total) headTimeMs = total;
+
+    videotrackUI.applyTimelineJson(data.master, data.segments);
+
+    renderTimeline();
+    videotrackUI.renderVideoTrack();
+    refreshExportButtonState();
+    setHint('timeline.jsonを読み込みました' + (data.master ? '(マスターを再選択してください)' : ''));
+    onChangeCallback();
+  };
+  reader.readAsText(file);
+}
+
 toTimelineBtn.addEventListener('click', enterEditMode);
 backBtn.addEventListener('click', exitEditMode);
 playPauseBtn.addEventListener('click', togglePlay);
@@ -737,6 +884,20 @@ sBtn.addEventListener('click', handleSKey);
 mBtn.addEventListener('click', doMerge);
 undoBtn.addEventListener('click', doUndo);
 downloadEditorBtn.addEventListener('click', downloadFromSubs);
+exportMp4Btn.addEventListener('click', handleExportClick);
+exportCancelBtn.addEventListener('click', function () {
+  if (exportAbortController) exportAbortController.abort();
+});
+saveTimelineJsonBtn.addEventListener('click', saveTimelineJson);
+loadTimelineJsonBtn.addEventListener('click', function () {
+  timelineJsonFileInput.click();
+});
+timelineJsonFileInput.addEventListener('change', function () {
+  var file = timelineJsonFileInput.files[0];
+  timelineJsonFileInput.value = '';
+  if (!file) return;
+  loadTimelineJsonFile(file);
+});
 
 ruler.addEventListener('click', function (e) {
   var rect = ruler.getBoundingClientRect();
@@ -804,7 +965,7 @@ editorCps.addEventListener('change', function () {
 });
 
 document.addEventListener('keydown', function (e) {
-  if (mode !== 'edit' || modalOpen) return;
+  if (mode !== 'edit' || modalOpen || editingLocked) return;
 
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
     e.preventDefault();
@@ -820,6 +981,12 @@ document.addEventListener('keydown', function (e) {
   } else if (e.key === 'ArrowDown') {
     e.preventDefault();
     stepDown();
+  } else if (e.key === 'ArrowLeft') {
+    e.preventDefault();
+    seekTo(headTimeMs - 100);
+  } else if (e.key === 'ArrowRight') {
+    e.preventDefault();
+    seekTo(headTimeMs + 100);
   } else if (e.key === 's' || e.key === 'S') {
     handleSKey();
   } else if (e.key === 'm' || e.key === 'M') {
@@ -846,7 +1013,7 @@ videotrackUI.configure({
   currentPxPerSec: currentPxPerSec,
   onChange: function () { onChangeCallback(); },
   onFocusRequest: function (track) { setFocusedTrack(track); },
-  onMasterLoaded: function () { refreshPlayheadUI(); }
+  onMasterLoaded: function () { refreshPlayheadUI(); refreshExportButtonState(); }
 });
 videotrackUI.getVideoElement().addEventListener('seeked', function () {
   if (mode === 'edit') renderPreview();

@@ -153,3 +153,14 @@ export function resizeSegmentIn(segments, subs, index, rawSrcInMs) {
   }
   return { ok: true, segments: nextSegments, subs: nextSubs };
 }
+
+// フレーム境界を累積msから導出する(§5.2-1)。フレームnの出力時刻はn*1000/fps(実数)。
+// 区間ごとの個別丸めをしないことで、隣接フレームの隙間・重複を構造的に排除する。
+export function frameTimestampsMs(totalMs, fps) {
+  var frameCount = Math.round(totalMs * fps / 1000);
+  var timestamps = [];
+  for (var n = 0; n < frameCount; n++) {
+    timestamps.push(n * 1000 / fps);
+  }
+  return timestamps;
+}

@@ -11,7 +11,7 @@ import {
   previewFontSizePx, previewStrokeWidthPx, previewBaselineOffsetPx
 } from '../core/style.js';
 
-var CANVAS_HEIGHT = Math.round(CANVAS_BASE_WIDTH / 9 * 16); // 1920 (9:16)
+export var CANVAS_HEIGHT = Math.round(CANVAS_BASE_WIDTH / 9 * 16); // 1920 (9:16)
 var LINE_HEIGHT_FACTOR = 1.3; // 既存CSSのline-height:1.3を踏襲
 
 var previewCanvas = document.getElementById('previewCanvas');
@@ -42,12 +42,14 @@ function drawVideoCover(videoEl) {
 }
 
 // strokeText -> fillTextの順(paint-order: stroke fill相当)で、下の行から積み上げて描画する。
-function drawSubtitleText(text, fontSize, calibration) {
+// ctx・canvasWidth・canvasHeightを引数で受け取ることで、プレビュー(previewCanvas)と
+// 書き出し(src/export/mp4.js が持つオフスクリーンcanvas)の両方から同一実装を共有できる(§5.3)。
+export function drawSubtitleText(ctx, text, fontSize, calibration, canvasWidth, canvasHeight) {
   if (!text) return;
   var lines = text.split('\n');
-  var fontPx = previewFontSizePx(fontSize, calibration, CANVAS_BASE_WIDTH);
-  var strokePx = previewStrokeWidthPx(CANVAS_BASE_WIDTH);
-  var baselinePx = previewBaselineOffsetPx(CANVAS_BASE_WIDTH);
+  var fontPx = previewFontSizePx(fontSize, calibration, canvasWidth);
+  var strokePx = previewStrokeWidthPx(canvasWidth);
+  var baselinePx = previewBaselineOffsetPx(canvasWidth);
   var lineHeight = fontPx * LINE_HEIGHT_FACTOR;
 
   ctx.font = 'bold ' + fontPx + 'px "Times New Roman"';
@@ -58,9 +60,9 @@ function drawSubtitleText(text, fontSize, calibration) {
   ctx.strokeStyle = '#000';
   ctx.fillStyle = '#fff';
 
-  var x = CANVAS_BASE_WIDTH / 2;
+  var x = canvasWidth / 2;
   for (var i = lines.length - 1; i >= 0; i--) {
-    var y = CANVAS_HEIGHT - baselinePx - (lines.length - 1 - i) * lineHeight;
+    var y = canvasHeight - baselinePx - (lines.length - 1 - i) * lineHeight;
     ctx.strokeText(lines[i], x, y);
     ctx.fillText(lines[i], x, y);
   }
@@ -70,5 +72,5 @@ function drawSubtitleText(text, fontSize, calibration) {
 export function drawCompositeFrame(videoEl, text, fontSize, calibration) {
   ensureCanvasSize();
   drawVideoCover(videoEl);
-  drawSubtitleText(text, fontSize, calibration);
+  drawSubtitleText(ctx, text, fontSize, calibration, CANVAS_BASE_WIDTH, CANVAS_HEIGHT);
 }
