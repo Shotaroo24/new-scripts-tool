@@ -3,15 +3,18 @@
 
 import {
   Input, BlobSource, ALL_FORMATS, Output, Mp4OutputFormat, BufferTarget,
-  CanvasSource, CanvasSink, AudioBufferSink, AudioBufferSource, QUALITY_HIGH
+  CanvasSource, CanvasSink, AudioBufferSink, AudioBufferSource
 } from '../../vendor/mediabunny.js';
-import { totalDurationMs, clipAt } from '../core/time.js';
+import { totalDurationMs, clipAt, computeStartsMs } from '../core/time.js';
 import { outputToSrc, frameTimestampsMs } from '../core/videotrack.js';
 import { CANVAS_BASE_WIDTH } from '../core/style.js';
 import { drawSubtitleText, CANVAS_HEIGHT } from '../ui/preview.js';
 
 var FPS = 30; // §5.1
 var AUDIO_BITRATE = 128e3; // AAC 128kbps(§5.1)
+// 1080x1920/30fpsのH.264には mediabunny の QUALITY_HIGH(このサイズでは約6Mbps相当)では
+// 動きの多い素材でブロックノイズが出やすいため、明示的に10Mbpsを指定する(§5.1)。
+var VIDEO_BITRATE = 10e6;
 
 // §4.3: マスター選択時のデコード可否判定(mediabunnyのデマルチプレクサで実ファイルの
 // トラック/コーデックを読み取って判定する。VideoDecoder.isConfigSupportedへの
@@ -91,7 +94,7 @@ export async function exportMp4(options) {
 
   var videoSource = new CanvasSource(canvas, {
     codec: 'avc',
-    bitrate: QUALITY_HIGH,
+    bitrate: VIDEO_BITRATE,
     hardwareAcceleration: 'prefer-hardware'
   });
   output.addVideoTrack(videoSource, { frameRate: FPS });
@@ -120,36 +123,81 @@ export async function exportMp4(options) {
     }
 
     // ---- 映像: フレーム境界を累積msから導出し、cover fit + 字幕合成 ----
+    // 区間ごとにCanvasSinkの範囲イテレータ(canvases)で順次デコードする。
+    // 独立したgetCanvas()呼び出しを毎フレーム繰り返すと、mediabunnyのドキュメントが
+    // 明記する通り同じパケットを何度も再デコードすることになり非効率(かつ、必要な
+    // フレームより古い/新しいフレームを取りこぼす原因になりうる)。区間内は出力時刻・
+    // ソース時刻とも単調増加するため、1回の順次デコードで全フレームをまかなえる。
     var totalMs = totalDurationMs(segments);
     var frameTimes = frameTimestampsMs(totalMs, FPS);
+    var starts = computeStartsMs(segments);
     var canvasSink = new CanvasSink(videoTrack, {
       width: CANVAS_BASE_WIDTH,
       height: CANVAS_HEIGHT,
       fit: 'cover',
-      poolSize: 1
+      poolSize: 2
     });
     var frameDurationSec = (1000 / FPS) / 1000;
 
-    for (var i = 0; i < frameTimes.length; i++) {
-      checkAborted();
-      var outputMs = frameTimes[i];
-      var srcMs = outputToSrc(segments, outputMs);
-      var wrapped = await canvasSink.getCanvas(srcMs / 1000);
+    var frameCursor = 0;
+    var framesDrawn = 0;
+    var duplicatedFrames = 0; // 直前と同じソースフレームを再利用した回数(fps差による正常な重複を含む)
 
-      if (wrapped) {
-        ctx.drawImage(wrapped.canvas, 0, 0, CANVAS_BASE_WIDTH, CANVAS_HEIGHT);
-      } else {
-        ctx.fillStyle = '#808080';
-        ctx.fillRect(0, 0, CANVAS_BASE_WIDTH, CANVAS_HEIGHT);
+    for (var segIdx = 0; segIdx < segments.length; segIdx++) {
+      checkAborted();
+      var seg = segments[segIdx];
+      var segOutEnd = starts[segIdx] + seg.durMs;
+
+      var segFrameIdxs = [];
+      while (frameCursor < frameTimes.length && Math.round(frameTimes[frameCursor]) < segOutEnd) {
+        segFrameIdxs.push(frameCursor);
+        frameCursor++;
+      }
+      if (segFrameIdxs.length === 0) continue;
+
+      var segStartSec = seg.srcInMs / 1000;
+      var segEndSec = (seg.srcInMs + seg.durMs) / 1000;
+      var iterator = canvasSink.canvases(segStartSec, segEndSec);
+      var nextItem = await iterator.next();
+      var currentFrame = nextItem.done ? null : nextItem.value;
+      if (!nextItem.done) nextItem = await iterator.next();
+
+      for (var k = 0; k < segFrameIdxs.length; k++) {
+        checkAborted();
+        var outputMs = frameTimes[segFrameIdxs[k]];
+        var srcMs = outputToSrc(segments, outputMs);
+        var srcSec = srcMs / 1000;
+
+        var advanced = false;
+        while (!nextItem.done && nextItem.value.timestamp <= srcSec) {
+          currentFrame = nextItem.value;
+          nextItem = await iterator.next();
+          advanced = true;
+        }
+        if (!advanced && framesDrawn > 0) duplicatedFrames++;
+
+        if (currentFrame) {
+          ctx.drawImage(currentFrame.canvas, 0, 0, CANVAS_BASE_WIDTH, CANVAS_HEIGHT);
+        } else {
+          ctx.fillStyle = '#808080';
+          ctx.fillRect(0, 0, CANVAS_BASE_WIDTH, CANVAS_HEIGHT);
+        }
+
+        var subIdx = clipAt(subs, outputMs);
+        var text = subIdx === -1 ? null : subs[subIdx].text;
+        drawSubtitleText(ctx, text, fontSize, calibration, CANVAS_BASE_WIDTH, CANVAS_HEIGHT);
+
+        await videoSource.add(outputMs / 1000, frameDurationSec);
+        framesDrawn++;
+        onProgress({ phase: 'video', ratio: framesDrawn / frameTimes.length });
       }
 
-      var subIdx = clipAt(subs, outputMs);
-      var text = subIdx === -1 ? null : subs[subIdx].text;
-      drawSubtitleText(ctx, text, fontSize, calibration, CANVAS_BASE_WIDTH, CANVAS_HEIGHT);
-
-      await videoSource.add(outputMs / 1000, frameDurationSec);
-      onProgress({ phase: 'video', ratio: (i + 1) / frameTimes.length });
+      if (!nextItem.done) await iterator.return();
     }
+
+    // 診断ログ: ソースのfpsが出力(30fps)を下回る場合、同一フレームの再利用(重複)が
+    // 一定数生じるのは正常(アップサンプリング)。異常な多発がないかの目視確認用。
+    console.info('[mp4 export] frames=' + framesDrawn + ' duplicated=' + duplicatedFrames);
 
     await output.finalize();
   } catch (err) {

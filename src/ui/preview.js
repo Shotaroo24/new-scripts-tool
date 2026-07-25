@@ -74,3 +74,10 @@ export function drawCompositeFrame(videoEl, text, fontSize, calibration) {
   drawVideoCover(videoEl);
   drawSubtitleText(ctx, text, fontSize, calibration, CANVAS_BASE_WIDTH, CANVAS_HEIGHT);
 }
+
+// 再生が最後まで到達した直後に表示する黒画面(最終フレームの静止を防ぐ)。
+export function drawBlackFrame() {
+  ensureCanvasSize();
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, CANVAS_BASE_WIDTH, CANVAS_HEIGHT);
+}

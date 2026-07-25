@@ -3,7 +3,7 @@
 import { computeStartsMs, totalDurationMs, clipAt, msToPx, pxToMs } from '../core/time.js';
 import {
   initialSegments, outputToSrc, splitSegmentAt, deleteSegmentRipple,
-  resizeSegmentIn, resizeSegmentOut
+  resizeSegmentIn, resizeSegmentOut, moveSegment
 } from '../core/videotrack.js';
 import { checkMasterDecodability } from '../export/mp4.js';
 
@@ -21,7 +21,20 @@ var masterFile = null; // 選択された生のFile(書き出しでmediabunnyに
 var masterVideoUrl = null;
 var focused = false;
 var dragState = null;
+var reorderState = null;
 var pendingRestoreMaster = null; // 復元待ち(§2.2): { fileName, durationMs } | null
+
+// 選択中の区間(字幕トラックの選択とは独立に管理する)。Deleteや矢印キー移動の対象になる。
+// S(分割)は仕様上「再生ヘッド位置」で行うため、選択とは別にcurrentSegmentIndex()を使う。
+var selectedSegmentIndex = -1;
+
+function clampSelection() {
+  if (segments.length === 0) {
+    selectedSegmentIndex = -1;
+  } else if (selectedSegmentIndex < 0 || selectedSegmentIndex >= segments.length) {
+    selectedSegmentIndex = 0;
+  }
+}
 
 var deps = {
   getSubs: function () { return []; },
@@ -65,24 +78,46 @@ export function outputToSrcMs(tMs) {
   return outputToSrc(segments, tMs);
 }
 
+// 再生ヘッド位置の区間(S=分割はこの位置で行う仕様のため)。選択状態とは別概念。
 export function currentSegmentIndex() {
   if (segments.length === 0) return -1;
   return clipAt(segments, deps.getHeadTimeMs());
 }
 
+// 選択中の区間(Delete・矢印キー移動・並べ替えの対象)。字幕側の選択とは独立。
+export function getSelectedSegmentIndex() {
+  return selectedSegmentIndex;
+}
+export function setSelectedSegmentIndex(index) {
+  selectedSegmentIndex = index;
+  clampSelection();
+}
+
 // Undo復元専用: segmentsをそのまま置き換える(履歴には既にディープコピーが積まれている)。
 export function restoreSegments(nextSegments) {
   segments = nextSegments;
+  clampSelection();
 }
 
 // 再生ヘッド移動のたびに呼ばれる軽量な現在区間ハイライト更新(DOM再構築はしない)。
 export function updateCurrentHighlight() {
   if (!master) return;
-  var idx = currentSegmentIndex();
   var els = videoTrack.children;
   for (var i = 0; i < els.length; i++) {
-    els[i].classList.toggle('current', i === idx);
+    els[i].classList.toggle('current', i === selectedSegmentIndex);
   }
+}
+
+// 選択中の区間を隣(prev/next)へ移動し、その区間の頭へシークする(字幕側の↑↓と同等の操作感)。
+export function stepSelection(direction) {
+  if (segments.length === 0) return;
+  var next = selectedSegmentIndex + direction;
+  if (next < 0 || next >= segments.length) return;
+  selectedSegmentIndex = next;
+  var starts = computeStartsMs(segments);
+  deps.seekTo(starts[next]);
+  renderVideoTrack();
+  deps.onChange();
 }
 
 export function setFocused(value) {
@@ -201,6 +236,8 @@ async function loadMasterFile(file) {
   }
 
   master = { fileName: file.name, durationMs: durationMs, width: width, height: height };
+  if (selectedSegmentIndex === -1) selectedSegmentIndex = 0;
+  clampSelection();
   videoTrackRow.style.display = '';
   updateMasterStatusUI();
   renderVideoTrack();
@@ -246,24 +283,59 @@ function snapMs(rawMs, altKey) {
   return best;
 }
 
-// S: 再生ヘッド位置で focus 中の区間を分割する。
+// ---- 区間の並べ替え(ドラッグ) ----
+var REORDER_DRAG_THRESHOLD_PX = 4; // これ未満の移動はクリック(選択+頭出し)として扱う
+
+// ドラッグ後の中心位置から、並べ替え先のインデックス(fromIndexを除いた配列における
+// 挿入位置)を求める。moveSegmentのtoIndexにそのまま渡せる。
+function computeReorderTargetIndex(fromIndex, deltaPx) {
+  var pxPerSec = deps.currentPxPerSec();
+  var starts = computeStartsMs(segments);
+  var fromWidthPx = msToPx(segments[fromIndex].durMs, pxPerSec);
+  var fromCenterPx = msToPx(starts[fromIndex], pxPerSec) + fromWidthPx / 2;
+  var newCenterPx = fromCenterPx + deltaPx;
+
+  var acc = 0;
+  for (var j = 0; j < segments.length; j++) {
+    if (j === fromIndex) continue;
+    var widthPx = msToPx(segments[j].durMs, pxPerSec);
+    if (newCenterPx < acc + widthPx / 2) {
+      return j < fromIndex ? j : j - 1;
+    }
+    acc += widthPx;
+  }
+  return segments.length - 1;
+}
+
+// S: 再生ヘッド位置で区間を分割する(§3.2)。分割後は先頭側(headMs以前)を選択状態にする。
 export function doSplit() {
   var idx = currentSegmentIndex();
   if (idx === -1) return { ok: false };
   var result = splitSegmentAt(segments, idx, deps.getHeadTimeMs());
   if (!result.ok) return { ok: false };
   segments = result.segments;
+  selectedSegmentIndex = idx;
   return { ok: true };
 }
 
-// Delete: 再生ヘッド位置の区間をリップル削除し、字幕トラックを連動させる。
+// Delete: 選択中の区間をリップル削除し、字幕トラックを連動させる(§3.2「選択区間を削除」)。
 export function doDelete() {
-  var idx = currentSegmentIndex();
+  var idx = selectedSegmentIndex;
   if (idx === -1) return { ok: false, subs: deps.getSubs() };
   var result = deleteSegmentRipple(segments, deps.getSubs(), idx);
   if (!result.ok) return { ok: false, subs: deps.getSubs() };
   segments = result.segments;
+  clampSelection();
   return { ok: true, subs: result.subs };
+}
+
+// 区間の並べ替え(ドラッグ)。ギャップ0不変条件・累積導出は変更しない(配列の順序のみ)。
+export function doMoveSegment(fromIndex, toIndex) {
+  var result = moveSegment(segments, fromIndex, toIndex);
+  if (!result.ok) return { ok: false };
+  segments = result.segments;
+  selectedSegmentIndex = toIndex;
+  return { ok: true };
 }
 
 export function renderVideoTrack() {
@@ -275,14 +347,14 @@ export function renderVideoTrack() {
 
   var pxPerSec = deps.currentPxPerSec();
   var starts = computeStartsMs(segments);
-  var curIdx = currentSegmentIndex();
+  clampSelection();
 
   videoTrack.innerHTML = '';
   var frag = document.createDocumentFragment();
 
   segments.forEach(function (seg, index) {
     var box = document.createElement('div');
-    box.className = 'segment' + (index === curIdx ? ' current' : '');
+    box.className = 'segment' + (index === selectedSegmentIndex ? ' current' : '');
     box.style.width = msToPx(seg.durMs, pxPerSec) + 'px';
 
     var durDiv = document.createElement('div');
@@ -304,9 +376,52 @@ export function renderVideoTrack() {
     box.appendChild(rightHandle);
     frag.appendChild(box);
 
-    box.addEventListener('click', function () {
-      deps.onFocusRequest('video');
-      deps.seekTo(starts[index]);
+    // 区間本体(端のトリムハンドルを除く)のドラッグ: 微小な移動ならクリック(選択+頭出し)、
+    // 一定以上動かせば並べ替えとして扱う。
+    box.addEventListener('pointerdown', function (e) {
+      if (e.target === leftHandle || e.target === rightHandle) return;
+      e.stopPropagation();
+      try { box.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      reorderState = { index: index, startX: e.clientX, deltaPx: 0, moved: false };
+    });
+    box.addEventListener('pointermove', function (e) {
+      if (!reorderState || reorderState.index !== index) return;
+      var deltaPx = e.clientX - reorderState.startX;
+      reorderState.deltaPx = deltaPx;
+      if (Math.abs(deltaPx) > REORDER_DRAG_THRESHOLD_PX && !reorderState.moved) {
+        reorderState.moved = true;
+        deps.pushHistorySnapshot();
+        box.classList.add('dragging');
+      }
+      if (reorderState.moved) {
+        box.style.transform = 'translateX(' + deltaPx + 'px)';
+      }
+    });
+    box.addEventListener('pointerup', function (e) {
+      if (!reorderState || reorderState.index !== index) return;
+      try { box.releasePointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+      var state = reorderState;
+      reorderState = null;
+      box.style.transform = '';
+      box.classList.remove('dragging');
+
+      if (state.moved) {
+        deps.onFocusRequest('video');
+        var targetIndex = computeReorderTargetIndex(index, state.deltaPx);
+        if (targetIndex !== index) {
+          var result = doMoveSegment(index, targetIndex);
+          if (result.ok) {
+            renderVideoTrack();
+            deps.onSubsChanged();
+          }
+        }
+        deps.onChange();
+      } else {
+        selectedSegmentIndex = index;
+        deps.onFocusRequest('video');
+        deps.seekTo(starts[index]);
+        renderVideoTrack();
+      }
     });
 
     rightHandle.addEventListener('pointerdown', function (e) {

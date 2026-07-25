@@ -154,6 +154,23 @@ export function resizeSegmentIn(segments, subs, index, rawSrcInMs) {
   return { ok: true, segments: nextSegments, subs: nextSubs };
 }
 
+// 区間の並べ替え: fromIndex番目の区間をtoIndex番目の位置へ移動する(配列の順序変更のみ)。
+// srcInMs/durMsは一切変更しないため、Σ durMs(総尺)・各区間のソース範囲は不変。
+// 出力位置は既存どおり累積導出のみで求まるため、並べ替え後もギャップ0が自動的に保たれる。
+export function moveSegment(segments, fromIndex, toIndex) {
+  if (
+    fromIndex < 0 || fromIndex >= segments.length ||
+    toIndex < 0 || toIndex >= segments.length ||
+    fromIndex === toIndex
+  ) {
+    return { ok: false, segments: segments };
+  }
+  var next = segments.slice();
+  var moved = next.splice(fromIndex, 1)[0];
+  next.splice(toIndex, 0, moved);
+  return { ok: true, segments: next };
+}
+
 // フレーム境界を累積msから導出する(§5.2-1)。フレームnの出力時刻はn*1000/fps(実数)。
 // 区間ごとの個別丸めをしないことで、隣接フレームの隙間・重複を構造的に排除する。
 export function frameTimestampsMs(totalMs, fps) {

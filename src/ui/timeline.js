@@ -21,7 +21,7 @@ import {
 } from '../core/style.js';
 import { textarea, translationTextarea, cpsInput, bomCheckbox, toTimelineBtn, render, downloadSrtContent } from './manuscript.js';
 import * as videotrackUI from './videotrack-ui.js';
-import { drawCompositeFrame } from './preview.js';
+import { drawCompositeFrame, drawBlackFrame } from './preview.js';
 
 var mainView = document.getElementById('mainView');
 var editorView = document.getElementById('editorView');
@@ -55,6 +55,7 @@ var subtitleTrackRow = document.getElementById('subtitleTrackRow');
 var clipsTrack = document.getElementById('clipsTrack');
 var playhead = document.getElementById('playhead');
 var previewCanvas = document.getElementById('previewCanvas');
+var playbackRateBtn = document.getElementById('playbackRateBtn');
 var exportMp4Btn = document.getElementById('exportMp4Btn');
 var exportProgressRow = document.getElementById('exportProgressRow');
 var exportProgressBar = document.getElementById('exportProgressBar');
@@ -97,6 +98,9 @@ var focusedTrack = 'subtitle'; // 'subtitle' | 'video'(§3.1、マスター未�
 var VIDEO_SYNC_TOLERANCE_MS = 150;
 var editingLocked = false; // 書き出し中は編集操作をロックする(§5.2-4)
 var exportAbortController = null;
+var selectedClipIndex = -1; // 選択中の字幕クリップ(動画トラックの選択とは独立)
+var playbackRate = 1; // 1x/2x/3x(Lキーでサイクル)
+var playbackJustEnded = false; // 再生が最後まで到達した直後は黒画面を表示する
 
 var onChangeCallback = function () {};
 
@@ -167,6 +171,16 @@ function currentClipIndex() {
   return clipAt(subs, headTimeMs);
 }
 
+// 選択中の字幕クリップ(Delete・ダブルクリック編集等の対象)。動画トラックの選択とは
+// 独立に管理する(片方を選択してももう片方の選択状態に影響しない)。
+function clampSelectedClip() {
+  if (subs.length === 0) {
+    selectedClipIndex = -1;
+  } else if (selectedClipIndex < 0 || selectedClipIndex >= subs.length) {
+    selectedClipIndex = 0;
+  }
+}
+
 // トラックフォーカス(§3.1)。マスター未読み込み時は常に字幕トラック固定(videotrackUI側でガード)。
 function setFocusedTrack(track) {
   focusedTrack = track;
@@ -224,10 +238,9 @@ function renderRuler(widthPx, totalMs) {
 }
 
 function updateCurrentHighlight() {
-  var idx = currentClipIndex();
   var clipEls = clipsTrack.children;
   for (var i = 0; i < clipEls.length; i++) {
-    clipEls[i].classList.toggle('current', i === idx);
+    clipEls[i].classList.toggle('current', i === selectedClipIndex);
   }
 }
 
@@ -280,6 +293,24 @@ function syncVideoToSrc(srcMs) {
 function renderPreview() {
   var idx = currentClipIndex();
   var sub = idx === -1 ? null : subs[idx];
+
+  if (playbackJustEnded) {
+    previewSafeGuide.style.display = 'none';
+    previewJudgeBadge.innerHTML = '';
+    previewTranslationText.textContent = '';
+    if (videotrackUI.hasMaster()) {
+      previewSubtitleText.style.display = 'none';
+      previewCanvas.style.display = '';
+      drawBlackFrame();
+    } else {
+      previewCanvas.style.display = 'none';
+      previewSubtitleText.style.display = 'none';
+      previewFrame.style.background = '#000';
+    }
+    return;
+  }
+  previewSafeGuide.style.display = '';
+  previewFrame.style.background = '';
 
   if (videotrackUI.hasMaster()) {
     previewSubtitleText.style.display = 'none';
@@ -336,6 +367,7 @@ function relayout() {
 
 // 構造(枚数・テキスト)が変わった場合のフル再構築。
 function renderTimeline() {
+  clampSelectedClip();
   var total = totalDurationMs(subs);
   var pxPerSec = currentPxPerSec();
   var widthPx = Math.max(msToPx(total, pxPerSec), 1);
@@ -396,7 +428,17 @@ function renderTimeline() {
     clip.addEventListener('click', function (e) {
       var rect = clip.getBoundingClientRect();
       var offsetX = e.clientX - rect.left;
+      selectedClipIndex = index;
+      setFocusedTrack('subtitle');
       seekTo(starts[index] + pxToMs(offsetX, currentPxPerSec()));
+      updateCurrentHighlight();
+    });
+    clip.addEventListener('dblclick', function (e) {
+      e.stopPropagation();
+      if (modalOpen) return;
+      if (playing) stopPlayback();
+      selectedClipIndex = index;
+      openEditModal(index);
     });
   });
 
@@ -423,6 +465,7 @@ function autoScrollToPlayhead() {
 function seekTo(tMs) {
   var total = totalDurationMs(subs);
   headTimeMs = Math.max(0, Math.min(total, tMs));
+  playbackJustEnded = false;
   refreshPlayheadUI();
   autoScrollToPlayhead();
   onChangeCallback();
@@ -443,11 +486,12 @@ function stopPlayback() {
 }
 
 function playTick(now) {
-  var elapsedMs = now - playStartPerf;
+  var elapsedMs = (now - playStartPerf) * playbackRate;
   var total = totalDurationMs(subs);
   var t = playStartHeadMs + elapsedMs;
   if (t >= total) {
     headTimeMs = total;
+    playbackJustEnded = true;
     refreshPlayheadUI();
     autoScrollToPlayhead();
     stopPlayback();
@@ -463,6 +507,7 @@ function startPlayback() {
   if (subs.length === 0) return;
   var total = totalDurationMs(subs);
   if (headTimeMs >= total) headTimeMs = 0;
+  playbackJustEnded = false;
   playing = true;
   playStartPerf = performance.now();
   playStartHeadMs = headTimeMs;
@@ -470,9 +515,19 @@ function startPlayback() {
   if (videotrackUI.hasMaster()) {
     var videoEl = videotrackUI.getVideoElement();
     videoEl.currentTime = videotrackUI.outputToSrcMs(headTimeMs) / 1000;
+    videoEl.playbackRate = playbackRate;
     videoEl.play().catch(function () { /* 自動再生ポリシー等で失敗しても字幕タイムラインの再生は継続する */ });
   }
   rafId = requestAnimationFrame(playTick);
+}
+
+// L: 再生速度を1x→2x→3x→1xでサイクルする(再生中はvideo要素にも即時反映)。
+function cyclePlaybackRate() {
+  playbackRate = playbackRate >= 3 ? 1 : playbackRate + 1;
+  playbackRateBtn.textContent = playbackRate + 'x';
+  if (playing && videotrackUI.hasMaster()) {
+    videotrackUI.getVideoElement().playbackRate = playbackRate;
+  }
 }
 
 function togglePlay() {
@@ -484,10 +539,13 @@ function stepUp() {
   if (idx === -1) return;
   var starts = computeStartsMs(subs);
   if (headTimeMs - starts[idx] > HEAD_BACK_THRESHOLD_MS) {
+    selectedClipIndex = idx;
     seekTo(starts[idx]);
   } else if (idx > 0) {
+    selectedClipIndex = idx - 1;
     seekTo(starts[idx - 1]);
   } else {
+    selectedClipIndex = 0;
     seekTo(0);
   }
 }
@@ -496,6 +554,7 @@ function stepDown() {
   var idx = currentClipIndex();
   if (idx === -1 || idx >= subs.length - 1) return;
   var starts = computeStartsMs(subs);
+  selectedClipIndex = idx + 1;
   seekTo(starts[idx + 1]);
 }
 
@@ -510,6 +569,7 @@ function doTrim() {
     return;
   }
   subs = result.subs;
+  selectedClipIndex = idx;
   setHint('クリップをトリムしました');
   renderTimeline();
   onChangeCallback();
@@ -526,17 +586,20 @@ function doMerge() {
     return;
   }
   subs = result.subs;
+  selectedClipIndex = idx;
   setHint('クリップを結合しました');
   renderTimeline();
   onChangeCallback();
 }
 
+// Delete: 選択中の字幕クリップを削除する(動画トラックのDeleteと同様、選択が対象)。
 function doDelete() {
-  var idx = currentClipIndex();
-  if (idx === -1) return;
+  var idx = selectedClipIndex;
+  if (idx === -1 || idx >= subs.length) return;
   history = pushHistory(history, subs);
   var result = deleteClipAt(subs, idx);
   subs = result.subs;
+  clampSelectedClip();
   var total = totalDurationMs(subs);
   if (headTimeMs > total) headTimeMs = total;
   setHint('クリップを削除しました');
@@ -878,6 +941,7 @@ function loadTimelineJsonFile(file) {
 toTimelineBtn.addEventListener('click', enterEditMode);
 backBtn.addEventListener('click', exitEditMode);
 playPauseBtn.addEventListener('click', togglePlay);
+playbackRateBtn.addEventListener('click', cyclePlaybackRate);
 upBtn.addEventListener('click', stepUp);
 downBtn.addEventListener('click', stepDown);
 sBtn.addEventListener('click', handleSKey);
@@ -908,7 +972,9 @@ ruler.addEventListener('click', function (e) {
 previewFrame.addEventListener('dblclick', function () {
   if (mode !== 'edit' || modalOpen) return;
   if (playing) stopPlayback();
-  openEditModal(currentClipIndex());
+  var idx = currentClipIndex();
+  selectedClipIndex = idx;
+  openEditModal(idx);
 });
 
 modalCancelBtn.addEventListener('click', closeEditModal);
@@ -977,10 +1043,10 @@ document.addEventListener('keydown', function (e) {
     togglePlay();
   } else if (e.key === 'ArrowUp') {
     e.preventDefault();
-    stepUp();
+    if (focusedTrack === 'video' && videotrackUI.hasMaster()) videotrackUI.stepSelection(-1); else stepUp();
   } else if (e.key === 'ArrowDown') {
     e.preventDefault();
-    stepDown();
+    if (focusedTrack === 'video' && videotrackUI.hasMaster()) videotrackUI.stepSelection(1); else stepDown();
   } else if (e.key === 'ArrowLeft') {
     e.preventDefault();
     seekTo(headTimeMs - 100);
@@ -991,6 +1057,8 @@ document.addEventListener('keydown', function (e) {
     handleSKey();
   } else if (e.key === 'm' || e.key === 'M') {
     doMerge();
+  } else if (e.key === 'l' || e.key === 'L') {
+    cyclePlaybackRate();
   } else if (e.key === 'x' || e.key === 'X') {
     zoomIn();
   } else if (e.key === 'z' || e.key === 'Z') {

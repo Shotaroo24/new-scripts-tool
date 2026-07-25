@@ -6,7 +6,7 @@ import { MIN_DUR_MS, computeStartsMs, totalDurationMs, clipAt } from '../src/cor
 import {
   initialSegments, outputToSrc, rippleSubsForRange,
   splitSegmentAt, deleteSegmentRipple, resizeSegmentOut, resizeSegmentIn,
-  frameTimestampsMs
+  frameTimestampsMs, moveSegment
 } from '../src/core/videotrack.js';
 import { pushHistory, popHistory } from '../src/core/subs.js';
 
@@ -299,6 +299,82 @@ function isIntegerMs(v) {
     if (srcRefs[i] !== 2000 + Math.round(frameTimes[i])) { ok = false; break; }
   }
   assert(ok, '#5b 単一区間ではソース参照が出力時刻+srcInMsに一致する');
+})();
+
+// --- 区間の並べ替え(moveSegment、§3.6) ---
+
+// 基本: fromIndexの区間がtoIndex位置へ移動し、他の区間は相対順序を保つ
+(function () {
+  var segments = [
+    { srcInMs: 0, durMs: 1000 },
+    { srcInMs: 5000, durMs: 2000 },
+    { srcInMs: 9000, durMs: 1500 }
+  ];
+  var result = moveSegment(segments, 0, 2);
+  assert(result.ok, '#move 並べ替えが成功する');
+  assert(
+    JSON.stringify(result.segments) === JSON.stringify([
+      { srcInMs: 5000, durMs: 2000 },
+      { srcInMs: 9000, durMs: 1500 },
+      { srcInMs: 0, durMs: 1000 }
+    ]),
+    '#move index0の区間がindex2位置へ移動し、他は相対順序を保つ -> ' + JSON.stringify(result.segments)
+  );
+})();
+
+// srcInMs/durMsは一切変更されない(配列の順序のみが変わる)
+(function () {
+  var segments = [
+    { srcInMs: 0, durMs: 1000 },
+    { srcInMs: 5000, durMs: 2000 },
+    { srcInMs: 9000, durMs: 1500 }
+  ];
+  var result = moveSegment(segments, 2, 0);
+  var srcInSet = result.segments.map(function (s) { return s.srcInMs; }).sort();
+  var durSet = result.segments.map(function (s) { return s.durMs; }).sort();
+  assert(JSON.stringify(srcInSet) === JSON.stringify([0, 5000, 9000]), '#move srcInMsの集合は変化しない');
+  assert(JSON.stringify(durSet) === JSON.stringify([1000, 1500, 2000]), '#move durMsの集合は変化しない');
+})();
+
+// 総尺(Σ durMs)・各区間のソース範囲は並べ替え後も不変(保存則、§2.1-2/3)
+(function () {
+  var segments = [
+    { srcInMs: 0, durMs: 1000 },
+    { srcInMs: 5000, durMs: 2000 },
+    { srcInMs: 9000, durMs: 1500 }
+  ];
+  var totalBefore = totalDurationMs(segments);
+  var result = moveSegment(segments, 1, 2);
+  var totalAfter = totalDurationMs(result.segments);
+  assert(totalAfter === totalBefore, '#move 並べ替え後も総尺(Σ durMs)は不変 -> ' + totalAfter);
+  var withinRange = result.segments.every(function (s) { return s.srcInMs >= 0 && s.srcInMs + s.durMs <= 20000; });
+  assert(withinRange, '#move 並べ替え後も各区間のソース範囲は不変');
+})();
+
+// 並べ替え後もギャップ0(累積導出のみで出力位置が一意に決まる)ことの確認
+(function () {
+  var segments = [
+    { srcInMs: 0, durMs: 1000 },
+    { srcInMs: 5000, durMs: 2000 },
+    { srcInMs: 9000, durMs: 1500 }
+  ];
+  var result = moveSegment(segments, 0, 1);
+  var starts = computeStartsMs(result.segments);
+  var gapOk = true;
+  for (var i = 1; i < result.segments.length; i++) {
+    if (starts[i] !== starts[i - 1] + result.segments[i - 1].durMs) { gapOk = false; break; }
+  }
+  assert(gapOk, '#move 並べ替え後も出力位置にギャップが生じない(累積導出のみ)');
+})();
+
+// 無効な操作は拒否される(状態不変)
+(function () {
+  var segments = [{ srcInMs: 0, durMs: 1000 }, { srcInMs: 5000, durMs: 2000 }];
+  assert(moveSegment(segments, 0, 0).ok === false, '#move fromIndexとtoIndexが同じ場合は拒否される');
+  assert(moveSegment(segments, -1, 1).ok === false, '#move fromIndexが範囲外の場合は拒否される');
+  assert(moveSegment(segments, 0, 5).ok === false, '#move toIndexが範囲外の場合は拒否される');
+  var result = moveSegment(segments, 0, 0);
+  assert(result.segments === segments, '#move 拒否時は元の配列そのままが返る(状態不変)');
 })();
 
 console.log('');
