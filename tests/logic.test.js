@@ -619,7 +619,7 @@ function makeSubs(dursMs) {
   }
 })();
 
-// --- localStorage: 保存・復元・破損時フォールバック(スキーマv2) ---
+// --- localStorage: 保存・復元・破損時フォールバック(スキーマv3、§2.2) ---
 (function () {
   var validState = {
     manuscript: 'مرحبا',
@@ -631,7 +631,9 @@ function makeSubs(dursMs) {
     zoomIndex: 3,
     headTimeMs: 500,
     calibration: 1.05,
-    fontSize: 60
+    fontSize: 60,
+    master: { fileName: 'master_capcut.mp4', durationMs: 20000 },
+    segments: [{ srcInMs: 0, durMs: 20000 }]
   };
   var raw = serializeSession(validState);
   var restored = deserializeSession(raw);
@@ -642,38 +644,80 @@ function makeSubs(dursMs) {
   assert(restored.clips[0].en === 'Hello', '#local1 復元データのclips[0].enが一致');
   assert(restored.calibration === 1.05, '#local1 復元データのcalibrationが一致');
   assert(restored.fontSize === 60, '#local1 復元データのfontSizeが一致');
-  assert(restored.version === 2, '#local1 復元データにversion:2が含まれる');
+  assert(restored.version === 3, '#local1 復元データにversion:3が含まれる');
+  assert(restored.master.fileName === 'master_capcut.mp4' && restored.master.durationMs === 20000, '#local1 復元データのmasterが一致');
+  assert(restored.segments.length === 1 && restored.segments[0].durMs === 20000, '#local1 復元データのsegmentsが一致');
+
+  // マスター未読み込み(master:null, segments:[])のセッションも往復できる
+  var noMasterState = Object.assign({}, validState, { master: null, segments: [] });
+  var restoredNoMaster = deserializeSession(serializeSession(noMasterState));
+  assert(restoredNoMaster !== null && restoredNoMaster.master === null, '#local1 マスター未読み込み(master:null)のセッションも復元できる');
+  assert(restoredNoMaster.segments.length === 0, '#local1 マスター未読み込みではsegmentsが空配列になる');
 
   assert(deserializeSession('これはJSONではない') === null, '#local2 JSONパース失敗時はnullを返す(例外を投げない)');
   assert(deserializeSession('{"version":1,"manuscript":"a"}') === null, '#local2 旧バージョン(v1)は破棄されnullを返す');
+  assert(
+    deserializeSession(JSON.stringify({
+      version: 2, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
+      clips: [], zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55
+    })) === null,
+    '#local2 旧バージョン(v2、master/segments追加前)は破棄されnullを返す'
+  );
   assert(deserializeSession('null') === null, '#local2 null の場合はnullを返す');
   assert(deserializeSession('42') === null, '#local2 オブジェクトでない場合はnullを返す');
   assert(
-    deserializeSession(JSON.stringify({ version: 2, manuscript: 'a' })) === null,
+    deserializeSession(JSON.stringify({ version: 3, manuscript: 'a' })) === null,
     '#local2 必須フィールド欠落時はnullを返す'
   );
   assert(
     deserializeSession(JSON.stringify({
-      version: 2, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
+      version: 3, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
       clips: [{ text: 'x', durMs: 'not-a-number', delim: '', edited: false, en: '' }],
-      zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55
+      zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55, master: null, segments: []
     })) === null,
     '#local2 clips内の型不正はnullを返す'
   );
   assert(
     deserializeSession(JSON.stringify({
-      version: 2, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
+      version: 3, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
       clips: [{ text: 'x', durMs: 1000, delim: '', edited: false }], // en欠落
-      zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55
+      zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55, master: null, segments: []
     })) === null,
     '#local2 clips内のen欠落はnullを返す'
   );
   assert(
     isValidSessionData({
-      version: 2, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
-      clips: [], zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55
+      version: 3, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
+      clips: [], zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55, master: null, segments: []
     }) === true,
     '#local2 クリップ0件でも有効なセッションとして扱われる'
+  );
+  assert(
+    deserializeSession(JSON.stringify({
+      version: 3, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
+      clips: [], zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55,
+      master: { fileName: 'a.mp4' }, // durationMs欠落
+      segments: []
+    })) === null,
+    '#local3 masterのdurationMs欠落はnullを返す'
+  );
+  assert(
+    deserializeSession(JSON.stringify({
+      version: 3, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
+      clips: [], zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55,
+      master: null,
+      segments: [{ srcInMs: 0 }] // durMs欠落
+    })) === null,
+    '#local3 segments内のdurMs欠落はnullを返す'
+  );
+  assert(
+    deserializeSession(JSON.stringify({
+      version: 3, manuscript: 'a', translation: '', cps: 12, bom: false, mode: 'input',
+      clips: [], zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55,
+      master: null,
+      segments: 'not-an-array'
+    })) === null,
+    '#local3 segmentsが配列でない場合はnullを返す'
   );
 })();
 

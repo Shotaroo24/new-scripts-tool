@@ -18,6 +18,8 @@ import {
   previewBaselineOffsetPx, previewSafeMargins, judgeLineCount, autoSplitToTwoLines, collapseToOneLine
 } from '../core/style.js';
 import { textarea, translationTextarea, cpsInput, bomCheckbox, toTimelineBtn, render, downloadSrtContent } from './manuscript.js';
+import * as videotrackUI from './videotrack-ui.js';
+import { drawCompositeFrame } from './preview.js';
 
 var mainView = document.getElementById('mainView');
 var editorView = document.getElementById('editorView');
@@ -47,8 +49,10 @@ var fontSizeInput = document.getElementById('fontSizeInput');
 var timelineWrap = document.getElementById('timelineWrap');
 var timelineInner = document.getElementById('timelineInner');
 var ruler = document.getElementById('ruler');
+var subtitleTrackRow = document.getElementById('subtitleTrackRow');
 var clipsTrack = document.getElementById('clipsTrack');
 var playhead = document.getElementById('playhead');
+var previewCanvas = document.getElementById('previewCanvas');
 
 var editModal = document.getElementById('editModal');
 var modalArabicText = document.getElementById('modalArabicText');
@@ -79,6 +83,8 @@ var cpsAdjusting = false;
 var zoomIndex = DEFAULT_ZOOM_INDEX;
 var calibration = CALIBRATION_DEFAULT;
 var fontSize = FONT_SIZE_DEFAULT;
+var focusedTrack = 'subtitle'; // 'subtitle' | 'video'(§3.1、マスター未読み込み時は常にsubtitle)
+var VIDEO_SYNC_TOLERANCE_MS = 150;
 
 var onChangeCallback = function () {};
 
@@ -88,6 +94,7 @@ export function setOnChange(fn) {
 
 // 保存用スナップショット(app.jsのpersistSessionから読み出される)。
 export function getSessionSnapshot() {
+  var videoSnap = videotrackUI.getSessionSnapshot();
   return {
     cps: currentCps,
     mode: mode,
@@ -95,7 +102,9 @@ export function getSessionSnapshot() {
     zoomIndex: zoomIndex,
     headTimeMs: headTimeMs,
     calibration: calibration,
-    fontSize: fontSize
+    fontSize: fontSize,
+    master: videoSnap.master,
+    segments: videoSnap.segments
   };
 }
 
@@ -115,6 +124,8 @@ export function setStateFromSession(data) {
   calibrationInput.value = String(calibration);
   calibrationValue.textContent = calibration.toFixed(2);
   fontSizeInput.value = String(fontSize);
+
+  videotrackUI.setStateFromSession(data);
 }
 
 // 復元データのmodeが'edit'だった場合のみ、エディタ表示へ切り替える。
@@ -143,6 +154,16 @@ function setHint(msg) {
 function currentClipIndex() {
   return clipAt(subs, headTimeMs);
 }
+
+// トラックフォーカス(§3.1)。マスター未読み込み時は常に字幕トラック固定(videotrackUI側でガード)。
+function setFocusedTrack(track) {
+  focusedTrack = track;
+  subtitleTrackRow.classList.toggle('focused', track === 'subtitle');
+  videotrackUI.setFocused(track === 'video');
+}
+subtitleTrackRow.addEventListener('click', function () {
+  setFocusedTrack('subtitle');
+});
 
 // ---- 9:16実寸プレビュー用のCanvas幅測定(1080px空間、strokeWidth込み) ----
 var measureCanvas = document.createElement('canvas');
@@ -231,11 +252,47 @@ function applySubtitleStyle(frameEl, safeGuideEl, subtitleTextEl, judgeBadgeEl, 
   }
 }
 
-// 9:16実寸プレビューを更新する(再生ヘッド位置のクリップに追随)。
+// マスター読み込み時、<video>のcurrentTimeをoutputToSrcの写像先へ同期する(§4.1)。
+// 許容誤差内なら再シークしない(区間境界を跨いだ場合や大きなジャンプのみ補正)。
+function syncVideoToSrc(srcMs) {
+  var videoEl = videotrackUI.getVideoElement();
+  if (!videoEl || !isFinite(videoEl.duration)) return;
+  var currentMs = videoEl.currentTime * 1000;
+  if (Math.abs(currentMs - srcMs) > VIDEO_SYNC_TOLERANCE_MS) {
+    videoEl.currentTime = srcMs / 1000;
+  }
+}
+
+// 9:16実寸プレビューを更新する(再生ヘッド位置のクリップに追随)。マスター読み込み時は
+// Canvas合成(映像+字幕)、未読み込み時は既存のDOM描画(見た目・動作を完全に維持)。
 function renderPreview() {
   var idx = currentClipIndex();
   var sub = idx === -1 ? null : subs[idx];
-  applySubtitleStyle(previewFrame, previewSafeGuide, previewSubtitleText, previewJudgeBadge, sub ? sub.text : null, 320);
+
+  if (videotrackUI.hasMaster()) {
+    previewSubtitleText.style.display = 'none';
+    previewCanvas.style.display = '';
+
+    var srcMs = videotrackUI.outputToSrcMs(headTimeMs);
+    syncVideoToSrc(srcMs);
+    drawCompositeFrame(videotrackUI.getVideoElement(), sub ? sub.text : null, fontSize, calibration);
+
+    var widthPx = previewFrame.getBoundingClientRect().width || 320;
+    var margins = previewSafeMargins(widthPx);
+    previewSafeGuide.style.left = margins.left + 'px';
+    previewSafeGuide.style.right = margins.right + 'px';
+    previewSafeGuide.style.top = margins.top + 'px';
+    previewSafeGuide.style.bottom = margins.bottom + 'px';
+    if (sub) {
+      renderJudgeBadge(previewJudgeBadge, judgeLineCount(sub.text, SAFE_WIDTH_1080, measureTextWidth1080));
+    } else {
+      previewJudgeBadge.innerHTML = '';
+    }
+  } else {
+    previewCanvas.style.display = 'none';
+    previewSubtitleText.style.display = '';
+    applySubtitleStyle(previewFrame, previewSafeGuide, previewSubtitleText, previewJudgeBadge, sub ? sub.text : null, 320);
+  }
   previewTranslationText.textContent = sub ? sub.en : '';
 }
 
@@ -243,6 +300,7 @@ function renderPreview() {
 function refreshPlayheadUI() {
   updatePlayheadPosition();
   updateCurrentHighlight();
+  videotrackUI.updateCurrentHighlight();
   renderPreview();
 }
 
@@ -368,6 +426,7 @@ function stopPlayback() {
   if (rafId !== null) cancelAnimationFrame(rafId);
   rafId = null;
   updatePlayPauseIcon();
+  if (videotrackUI.hasMaster()) videotrackUI.getVideoElement().pause();
   if (wasPlaying) onChangeCallback();
 }
 
@@ -396,6 +455,11 @@ function startPlayback() {
   playStartPerf = performance.now();
   playStartHeadMs = headTimeMs;
   updatePlayPauseIcon();
+  if (videotrackUI.hasMaster()) {
+    var videoEl = videotrackUI.getVideoElement();
+    videoEl.currentTime = videotrackUI.outputToSrcMs(headTimeMs) / 1000;
+    videoEl.play().catch(function () { /* 自動再生ポリシー等で失敗しても字幕タイムラインの再生は継続する */ });
+  }
   rafId = requestAnimationFrame(playTick);
 }
 
@@ -468,6 +532,51 @@ function doDelete() {
   onChangeCallback();
 }
 
+// S: フォーカス中のトラックに応じてS操作を振り分ける(§3.1)。
+function handleSKey() {
+  if (focusedTrack === 'video' && videotrackUI.hasMaster()) doVideoSplit(); else doTrim();
+}
+
+// Delete: フォーカス中のトラックに応じてDelete操作を振り分ける(§3.1)。
+function handleDeleteKey() {
+  if (focusedTrack === 'video' && videotrackUI.hasMaster()) doVideoDelete(); else doDelete();
+}
+
+// S(動画トラック): 再生ヘッド位置で区間を分割する。字幕・映像とも変化しない(§3.2)。
+function doVideoSplit() {
+  history = pushHistory(history, { subs: subs, segments: videotrackUI.getSegments() });
+  var result = videotrackUI.doSplit();
+  if (!result.ok) {
+    history = history.slice(0, -1);
+    setHint('これ以上分割できません');
+    return;
+  }
+  setHint('区間を分割しました');
+  videotrackUI.renderVideoTrack();
+  onChangeCallback();
+}
+
+// Delete(動画トラック): 区間をリップル削除し、字幕トラックを§3.4の規則で連動させる。
+// subsとsegmentsの両方をUndo 1エントリとして一体で記録する(§3.4-4, §3.5)。
+function doVideoDelete() {
+  history = pushHistory(history, { subs: subs, segments: videotrackUI.getSegments() });
+  var result = videotrackUI.doDelete();
+  if (!result.ok) {
+    history = history.slice(0, -1);
+    setHint('最後の区間は削除できません');
+    return;
+  }
+  subs = result.subs;
+  var total = totalDurationMs(subs);
+  if (headTimeMs > total) headTimeMs = total;
+  setHint('区間を削除しました(字幕を連動して詰めました)');
+  renderTimeline();
+  videotrackUI.renderVideoTrack();
+  onChangeCallback();
+}
+
+// Undo: 履歴には字幕トラックのみのスナップショット(配列)と、動画トラックを含む
+// 操作のスナップショット({subs, segments})の2種類が混在しうるため、形で判別する。
 function doUndo() {
   var restored = popHistory(history);
   if (!restored) {
@@ -475,7 +584,14 @@ function doUndo() {
     return;
   }
   history = restored.stack;
-  subs = restored.subs;
+  var popped = restored.subs;
+  if (Array.isArray(popped)) {
+    subs = popped;
+  } else {
+    subs = popped.subs;
+    videotrackUI.restoreSegments(popped.segments);
+    videotrackUI.renderVideoTrack();
+  }
   var total = totalDurationMs(subs);
   if (headTimeMs > total) headTimeMs = total;
   setHint('元に戻しました');
@@ -602,6 +718,7 @@ function setZoom(newIndex) {
 
   zoomIndex = newIndex;
   renderTimeline();
+  videotrackUI.renderVideoTrack();
 
   var newAnchorX = msToPx(anchorMs, currentPxPerSec());
   timelineWrap.scrollLeft = Math.max(0, newAnchorX - anchorScreenX);
@@ -616,7 +733,7 @@ backBtn.addEventListener('click', exitEditMode);
 playPauseBtn.addEventListener('click', togglePlay);
 upBtn.addEventListener('click', stepUp);
 downBtn.addEventListener('click', stepDown);
-sBtn.addEventListener('click', doTrim);
+sBtn.addEventListener('click', handleSKey);
 mBtn.addEventListener('click', doMerge);
 undoBtn.addEventListener('click', doUndo);
 downloadEditorBtn.addEventListener('click', downloadFromSubs);
@@ -704,7 +821,7 @@ document.addEventListener('keydown', function (e) {
     e.preventDefault();
     stepDown();
   } else if (e.key === 's' || e.key === 'S') {
-    doTrim();
+    handleSKey();
   } else if (e.key === 'm' || e.key === 'M') {
     doMerge();
   } else if (e.key === 'x' || e.key === 'X') {
@@ -713,6 +830,29 @@ document.addEventListener('keydown', function (e) {
     zoomOut();
   } else if (e.key === 'Delete' || e.key === 'Backspace') {
     e.preventDefault();
-    doDelete();
+    handleDeleteKey();
   }
+});
+
+videotrackUI.configure({
+  getSubs: function () { return subs; },
+  setSubs: function (next) { subs = next; },
+  onSubsChanged: function () { relayout(); },
+  pushHistorySnapshot: function () {
+    history = pushHistory(history, { subs: subs, segments: videotrackUI.getSegments() });
+  },
+  getHeadTimeMs: function () { return headTimeMs; },
+  seekTo: function (tMs) { seekTo(tMs); },
+  currentPxPerSec: currentPxPerSec,
+  onChange: function () { onChangeCallback(); },
+  onFocusRequest: function (track) { setFocusedTrack(track); },
+  onMasterLoaded: function () { refreshPlayheadUI(); }
+});
+videotrackUI.getVideoElement().addEventListener('seeked', function () {
+  if (mode === 'edit') renderPreview();
+});
+// マスター読み込み直後、初回フレームが実際にデコードされたタイミングで再描画する
+// (loadMasterFile直後は同期的に読み込み中のため、drawImageが空振りすることがある)。
+videotrackUI.getVideoElement().addEventListener('loadeddata', function () {
+  if (mode === 'edit') renderPreview();
 });

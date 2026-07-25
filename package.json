@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node tests/logic.test.js"
+    "test": "node tests/logic.test.js && node tests/videotrack.test.js"
   }
 }

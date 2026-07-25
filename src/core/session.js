@@ -3,7 +3,7 @@
 import { ZOOM_LEVELS } from './time.js';
 
 export var STORAGE_KEY = 'srtgen:session:v1';
-export var SCHEMA_VERSION = 2; // 英訳(en)・calibration・fontSizeの追加に伴い旧v1データは破棄する
+export var SCHEMA_VERSION = 3; // segments・master(fileName/durationMs)の追加に伴い旧v2データは破棄する(§2.2)
 
 // ---- localStorage 永続化: スキーマ検証とシリアライズ(DOMに依存しない純粋部分) ----
 export function isValidSessionData(data) {
@@ -28,6 +28,21 @@ export function isValidSessionData(data) {
   if (typeof data.headTimeMs !== 'number' || !isFinite(data.headTimeMs)) return false;
   if (typeof data.calibration !== 'number' || !isFinite(data.calibration)) return false;
   if (typeof data.fontSize !== 'number' || !isFinite(data.fontSize) || data.fontSize <= 0) return false;
+
+  // マスターは未読み込みならnull、読み込み済みなら{fileName,durationMs}(動画ファイル本体は保存しない、§2.2)
+  if (data.master !== null) {
+    if (!data.master || typeof data.master !== 'object') return false;
+    if (typeof data.master.fileName !== 'string') return false;
+    if (typeof data.master.durationMs !== 'number' || !isFinite(data.master.durationMs)) return false;
+  }
+  if (!Array.isArray(data.segments)) return false;
+  for (var j = 0; j < data.segments.length; j++) {
+    var seg = data.segments[j];
+    if (!seg || typeof seg !== 'object') return false;
+    if (typeof seg.srcInMs !== 'number' || !isFinite(seg.srcInMs)) return false;
+    if (typeof seg.durMs !== 'number' || !isFinite(seg.durMs)) return false;
+  }
+
   return true;
 }
 
@@ -45,7 +60,11 @@ export function serializeSession(state) {
     zoomIndex: state.zoomIndex,
     headTimeMs: Math.round(state.headTimeMs),
     calibration: state.calibration,
-    fontSize: state.fontSize
+    fontSize: state.fontSize,
+    master: state.master ? { fileName: state.master.fileName, durationMs: state.master.durationMs } : null,
+    segments: state.segments.map(function (s) {
+      return { srcInMs: s.srcInMs, durMs: s.durMs };
+    })
   });
 }
 
