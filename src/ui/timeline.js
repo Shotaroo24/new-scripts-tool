@@ -7,18 +7,20 @@ import {
 import { segmentManuscript } from '../core/segment.js';
 import {
   subsFromSegments, cloneSubs, setClipDuration, trimClipAtHead, mergeClipAt, deleteClipAt,
-  recalcUneditedDurations, subsToCues, reconstructManuscript, reconstructTranslation, textEquals,
-  pushHistory, popHistory, splitEnglishLines
+  recalcUneditedDurations, subsToCues, reconstructManuscript, textEquals,
+  pushHistory, popHistory
 } from '../core/subs.js';
 import { buildSrt } from '../core/srt.js';
 import { serializeTimelineJson, deserializeTimelineJson } from '../core/session.js';
+import { formatNumberedClips, parseNumberedTranslation } from '../core/translation.js';
+import { copyTextWithFallback } from './clipboard.js';
 import {
   SAFE_WIDTH_1080, STROKE_WIDTH_AT_1080, FONT_SIZE_DEFAULT,
   CALIBRATION_DEFAULT, CALIBRATION_MIN, CALIBRATION_MAX, CALIBRATION_STEP,
   clampCalibration, measurementFontSize, previewFontSizePx, previewStrokeWidthPx,
   previewBaselineOffsetPx, previewSafeMargins, judgeLineCount, autoSplitToTwoLines, collapseToOneLine
 } from '../core/style.js';
-import { textarea, translationTextarea, cpsInput, bomCheckbox, toTimelineBtn, render, downloadSrtContent } from './manuscript.js';
+import { textarea, cpsInput, bomCheckbox, toTimelineBtn, render, downloadSrtContent } from './manuscript.js';
 
 var mainView = document.getElementById('mainView');
 var editorView = document.getElementById('editorView');
@@ -54,10 +56,20 @@ var playbackRateBtn = document.getElementById('playbackRateBtn');
 var saveTimelineJsonBtn = document.getElementById('saveTimelineJsonBtn');
 var loadTimelineJsonBtn = document.getElementById('loadTimelineJsonBtn');
 var timelineJsonFileInput = document.getElementById('timelineJsonFileInput');
+var copyNumberedBtn = document.getElementById('copyNumberedBtn');
+var pasteTranslationBtn = document.getElementById('pasteTranslationBtn');
+
+var pasteModal = document.getElementById('pasteModal');
+var pasteTextarea = document.getElementById('pasteTextarea');
+var pasteCheckBtn = document.getElementById('pasteCheckBtn');
+var pasteApplyBtn = document.getElementById('pasteApplyBtn');
+var pasteCancelBtn = document.getElementById('pasteCancelBtn');
+var pasteResult = document.getElementById('pasteResult');
 
 var editModal = document.getElementById('editModal');
 var modalArabicText = document.getElementById('modalArabicText');
 var modalEnglishText = document.getElementById('modalEnglishText');
+var modalStaleBadge = document.getElementById('modalStaleBadge');
 var modalAutoSplitBtn = document.getElementById('modalAutoSplitBtn');
 var modalCollapseBtn = document.getElementById('modalCollapseBtn');
 var modalPreviewFrame = document.getElementById('modalPreviewFrame');
@@ -89,9 +101,16 @@ var playbackRate = 1; // 1x/2x/3x(Lキーでサイクル)
 var playbackJustEnded = false; // 再生が最後まで到達した直後は黒画面を表示する
 
 var onChangeCallback = function () {};
+var onTranslationAppliedCallback = function () {};
 
 export function setOnChange(fn) {
   onChangeCallback = fn;
+}
+
+// 番号付き貼り付けが1件以上のクリップへ正常に適用された直後に1回だけ呼ばれる。
+// legacyTranslationTextバナーの破棄判定(app.js)に使う。
+export function setOnTranslationApplied(fn) {
+  onTranslationAppliedCallback = fn;
 }
 
 // 保存用スナップショット(app.jsのpersistSessionから読み出される)。
@@ -110,7 +129,7 @@ export function getSessionSnapshot() {
 // localStorageから復元したセッションのタイムライン部分を反映する(表示切り替えは含まない)。
 export function setStateFromSession(data) {
   subs = data.clips.map(function (c) {
-    return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited, en: c.en };
+    return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited, translation: c.translation, translationStale: c.translationStale };
   });
   hasTimelineState = subs.length > 0;
   currentCps = data.cps;
@@ -264,7 +283,7 @@ function renderPreview() {
   previewFrame.style.background = '';
   previewSubtitleText.style.display = '';
   applySubtitleStyle(previewFrame, previewSafeGuide, previewSubtitleText, previewJudgeBadge, sub ? sub.text : null, 320);
-  previewTranslationText.textContent = sub ? sub.en : '';
+  previewTranslationText.textContent = sub ? sub.translation : '';
 }
 
 // 再生ヘッド関連(位置・時刻表示・現在クリップ強調・プレビュー)をまとめて更新する。
@@ -317,8 +336,8 @@ function renderTimeline() {
     textDiv.textContent = sub.text.replace(/\n/g, ' ');
 
     var enDiv = document.createElement('div');
-    enDiv.className = 'clip-en';
-    enDiv.textContent = sub.en;
+    enDiv.className = 'clip-en' + (sub.translation ? '' : ' clip-en-empty') + (sub.translationStale ? ' clip-en-stale' : '');
+    enDiv.textContent = sub.translation || '英訳なし';
 
     var durDiv = document.createElement('div');
     durDiv.className = 'clip-dur';
@@ -508,6 +527,105 @@ function doMerge() {
   onChangeCallback();
 }
 
+// 「番号付きでコピー」(§3): アラビア語本文を番号付きテキストとしてクリップボードへ出力する。
+function doCopyNumbered() {
+  if (subs.length === 0) return;
+  var text = formatNumberedClips(subs);
+  copyTextWithFallback(text).then(function (ok) {
+    if (ok) setHint(subs.length + '行をコピーしました');
+  });
+}
+
+// 英訳貼り付けモーダル(§4-6)。直近の「照合」結果をpasteParsedに保持し、
+// テキストが変更されたら再照合を必須にする(適用ボタンを無効化)。
+var pasteParsed = null;
+
+function formatNumberList(nums) {
+  var shown = nums.slice(0, 10).map(function (n) { return '#' + n; }).join(' / ');
+  return nums.length > 10 ? (shown + ' 他 ' + (nums.length - 10) + '件') : shown;
+}
+
+function openPasteModal() {
+  pasteTextarea.value = '';
+  pasteResult.style.display = 'none';
+  pasteResult.className = 'paste-result';
+  pasteApplyBtn.disabled = true;
+  pasteParsed = null;
+  modalOpen = true;
+  pasteModal.style.display = 'flex';
+  pasteTextarea.focus();
+}
+
+function closePasteModal() {
+  pasteModal.style.display = 'none';
+  modalOpen = false;
+}
+
+function doPasteCheck() {
+  var parsed = parseNumberedTranslation(pasteTextarea.value, subs.length);
+  pasteParsed = parsed;
+  var issues = parsed.issues;
+  var validCount = 0;
+  parsed.entries.forEach(function (_, num) {
+    if (issues.outOfRange.indexOf(num) === -1) validCount++;
+  });
+
+  var matchedCount = subs.length - issues.missing.length;
+  var lines = [subs.length + '件中 ' + matchedCount + '件を照合しました'];
+  var subIssues = [];
+  if (issues.missing.length > 0) subIssues.push(formatNumberList(issues.missing) + ' が欠落');
+  if (issues.duplicate.length > 0) subIssues.push(formatNumberList(issues.duplicate) + ' が重複');
+  if (issues.outOfRange.length > 0) subIssues.push(formatNumberList(issues.outOfRange) + ' が範囲外');
+  if (issues.emptyBody.length > 0) subIssues.push(formatNumberList(issues.emptyBody) + ' が空本文');
+  if (subIssues.length > 0) lines.push(subIssues.join(' / '));
+  if (issues.preamble) lines.push('訳文以外のテキストが含まれています');
+
+  pasteResult.textContent = lines.join('\n');
+  pasteResult.style.display = '';
+
+  if (validCount === 0) {
+    pasteResult.className = 'paste-result danger';
+    pasteApplyBtn.disabled = true;
+  } else if (subIssues.length > 0) {
+    pasteResult.className = 'paste-result warning';
+    pasteApplyBtn.disabled = false;
+  } else {
+    pasteResult.className = 'paste-result success';
+    pasteApplyBtn.disabled = false;
+  }
+}
+
+function doPasteApply() {
+  if (!pasteParsed || pasteApplyBtn.disabled) return;
+  var overwriteAll = document.querySelector('input[name="pasteApplyMode"]:checked').value === 'overwriteAll';
+  var entries = pasteParsed.entries;
+  var outOfRangeSet = {};
+  pasteParsed.issues.outOfRange.forEach(function (n) { outOfRangeSet[n] = true; });
+
+  history = pushHistory(history, subs);
+  var next = cloneSubs(subs);
+  var appliedCount = 0;
+  for (var i = 0; i < next.length; i++) {
+    var num = i + 1;
+    if (outOfRangeSet[num] || !entries.has(num)) continue;
+    if (!overwriteAll && next[i].translation !== '') continue;
+    next[i].translation = entries.get(num);
+    next[i].translationStale = false;
+    appliedCount++;
+  }
+  if (appliedCount === 0) {
+    history = history.slice(0, -1);
+    setHint('適用できる訳文がありませんでした');
+  } else {
+    subs = next;
+    setHint(appliedCount + '件の訳文を適用しました');
+    renderTimeline();
+    onChangeCallback();
+    onTranslationAppliedCallback();
+  }
+  closePasteModal();
+}
+
 // Delete: 選択中の字幕クリップを削除する。
 function doDelete() {
   var idx = selectedClipIndex;
@@ -550,7 +668,8 @@ function openEditModal(idx) {
   modalOpen = true;
   var sub = subs[idx];
   modalArabicText.value = sub.text;
-  modalEnglishText.value = sub.en;
+  modalEnglishText.value = sub.translation;
+  modalStaleBadge.style.display = sub.translationStale ? '' : 'none';
   editModal.style.display = 'flex';
   updateModalPreview();
   modalArabicText.focus();
@@ -562,17 +681,26 @@ function closeEditModal() {
   modalIndex = -1;
 }
 
+// translationStale(要再訳)の追従(指示書3節5): アラビア語のみ変更 -> stale化、
+// 英訳のみ変更 -> stale解除、両方変更 -> stale解除(英訳が更新されたとみなす)。
 function saveEditModal() {
   if (modalIndex === -1) return;
   var newText = modalArabicText.value;
-  var newEn = modalEnglishText.value;
+  var newTranslation = modalEnglishText.value;
   var sub = subs[modalIndex];
-  if (newText !== sub.text || newEn !== sub.en) {
+  var textChanged = newText !== sub.text;
+  var translationChanged = newTranslation !== sub.translation;
+  if (textChanged || translationChanged) {
     history = pushHistory(history, subs);
     var next = cloneSubs(subs);
     next[modalIndex].text = newText;
-    next[modalIndex].en = newEn;
+    next[modalIndex].translation = newTranslation;
     next[modalIndex].edited = true;
+    if (translationChanged) {
+      next[modalIndex].translationStale = false;
+    } else if (textChanged) {
+      next[modalIndex].translationStale = true;
+    }
     subs = next;
     setHint('テキストを編集しました');
     renderTimeline();
@@ -595,25 +723,22 @@ function showEditor() {
 
 function enterEditMode() {
   var text = textarea.value;
-  var translation = translationTextarea.value;
   var cps = parseFloat(cpsInput.value);
 
   if (hasTimelineState) {
-    var unchanged = textEquals(text, reconstructManuscript(subs)) &&
-      textEquals(translation, reconstructTranslation(subs));
+    var unchanged = textEquals(text, reconstructManuscript(subs));
     if (unchanged) {
       showEditor();
       return;
     }
-    var ok = window.confirm('原稿または英訳が変更されています。タイムラインを再構築すると、手動調整した尺はリセットされます。よろしいですか？');
+    var ok = window.confirm('原稿が変更されています。タイムラインを再構築すると、手動調整した尺・訳文はリセットされます。よろしいですか？');
     if (!ok) return;
   }
 
   var segments = segmentManuscript(text);
   if (segments.length === 0) return;
 
-  var enLines = splitEnglishLines(translation);
-  subs = subsFromSegments(segments, cps, enLines);
+  subs = subsFromSegments(segments, cps);
   currentCps = (isFinite(cps) && cps > 0) ? cps : 12;
   history = [];
   headTimeMs = 0;
@@ -624,7 +749,6 @@ function enterEditMode() {
 function exitEditMode() {
   stopPlayback();
   textarea.value = reconstructManuscript(subs);
-  translationTextarea.value = reconstructTranslation(subs);
   mode = 'input';
   editorView.style.display = 'none';
   mainView.style.display = '';
@@ -705,7 +829,7 @@ function loadTimelineJsonFile(file) {
 
     history = [];
     subs = data.subs.map(function (c) {
-      return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited, en: c.en };
+      return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited, translation: c.translation, translationStale: c.translationStale };
     });
     hasTimelineState = subs.length > 0;
     currentCps = data.cps;
@@ -737,6 +861,16 @@ downBtn.addEventListener('click', stepDown);
 sBtn.addEventListener('click', doTrim);
 mBtn.addEventListener('click', doMerge);
 undoBtn.addEventListener('click', doUndo);
+copyNumberedBtn.addEventListener('click', doCopyNumbered);
+pasteTranslationBtn.addEventListener('click', openPasteModal);
+pasteCheckBtn.addEventListener('click', doPasteCheck);
+pasteApplyBtn.addEventListener('click', doPasteApply);
+pasteCancelBtn.addEventListener('click', closePasteModal);
+pasteTextarea.addEventListener('input', function () {
+  pasteApplyBtn.disabled = true;
+  pasteResult.style.display = 'none';
+  pasteParsed = null;
+});
 downloadEditorBtn.addEventListener('click', downloadFromSubs);
 saveTimelineJsonBtn.addEventListener('click', saveTimelineJson);
 loadTimelineJsonBtn.addEventListener('click', function () {

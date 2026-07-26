@@ -2,21 +2,16 @@
 
 import { pad, formatTotalDuration } from '../core/time.js';
 import { segmentManuscript, buildCues } from '../core/segment.js';
-import {
-  charCountForText, splitEnglishLines, buildAlignmentWarning, rowMismatchMessage,
-  shiftEnglishDown, compactEnglish
-} from '../core/subs.js';
+import { charCountForText } from '../core/subs.js';
 import { buildSrt } from '../core/srt.js';
 
 export var textarea = document.getElementById('manuscript');
-export var translationTextarea = document.getElementById('translation');
 export var cpsInput = document.getElementById('cps');
 export var bomCheckbox = document.getElementById('bom');
 export var downloadBtn = document.getElementById('downloadBtn');
 export var toTimelineBtn = document.getElementById('toTimelineBtn');
 var previewList = document.getElementById('previewList');
 var emptyState = document.getElementById('emptyState');
-var alignmentWarningEl = document.getElementById('alignmentWarning');
 var statCount = document.getElementById('statCount');
 var statDuration = document.getElementById('statDuration');
 
@@ -27,10 +22,11 @@ export function setOnChange(fn) {
   onChangeCallback = fn;
 }
 
-// 対応付け確認ビューの1行を構築する。シフト/詰めるは英訳側のみを操作する。
-function buildMappingRow(index, arabicText, enText, mismatchMsg) {
+// プレビューリストの1行を構築する(アラビア語本文+文字数のみ。英訳はタイムライン
+// モードでクリップ単位に付与するため、ここでは扱わない)。
+function buildPreviewRow(index, arabicText) {
   var row = document.createElement('div');
-  row.className = 'mapping-row' + (mismatchMsg ? ' mismatch' : '');
+  row.className = 'mapping-row';
 
   var idxDiv = document.createElement('div');
   idxDiv.className = 'mapping-index';
@@ -39,59 +35,15 @@ function buildMappingRow(index, arabicText, enText, mismatchMsg) {
   var arDiv = document.createElement('div');
   arDiv.className = 'mapping-arabic';
   arDiv.dir = 'rtl';
-  arDiv.textContent = arabicText === null ? '(アラビア語なし)' : arabicText;
-
-  var enDiv = document.createElement('div');
-  if (enText) {
-    enDiv.className = 'mapping-english';
-    enDiv.textContent = enText;
-  } else {
-    enDiv.className = 'mapping-english mapping-english-empty';
-    enDiv.textContent = '(空)';
-  }
+  arDiv.textContent = arabicText;
 
   var countDiv = document.createElement('div');
   countDiv.className = 'mapping-charcount';
-  countDiv.textContent = arabicText === null ? '' : (charCountForText(arabicText) + '文字');
+  countDiv.textContent = charCountForText(arabicText) + '文字';
 
   row.appendChild(idxDiv);
   row.appendChild(arDiv);
-  row.appendChild(enDiv);
   row.appendChild(countDiv);
-
-  if (mismatchMsg) {
-    var note = document.createElement('div');
-    note.className = 'mapping-mismatch-note';
-    note.textContent = mismatchMsg;
-    row.appendChild(note);
-  }
-
-  var actions = document.createElement('div');
-  actions.className = 'mapping-actions';
-
-  var shiftBtn = document.createElement('button');
-  shiftBtn.type = 'button';
-  shiftBtn.textContent = 'ここから1つ下にずらす';
-  shiftBtn.addEventListener('click', function () {
-    var lines = splitEnglishLines(translationTextarea.value);
-    translationTextarea.value = shiftEnglishDown(lines, index).join('\n');
-    render();
-    onChangeCallback();
-  });
-
-  var compactBtn = document.createElement('button');
-  compactBtn.type = 'button';
-  compactBtn.textContent = 'ここを詰める';
-  compactBtn.addEventListener('click', function () {
-    var lines = splitEnglishLines(translationTextarea.value);
-    translationTextarea.value = compactEnglish(lines, index).join('\n');
-    render();
-    onChangeCallback();
-  });
-
-  actions.appendChild(shiftBtn);
-  actions.appendChild(compactBtn);
-  row.appendChild(actions);
 
   return row;
 }
@@ -102,35 +54,18 @@ export function render() {
   var segments = segmentManuscript(text);
   currentCues = buildCues(segments, cps);
 
-  var enLines = splitEnglishLines(translationTextarea.value);
-  var arabicCount = segments.length;
-  var enCount = enLines.length;
-  var maxRows = Math.max(arabicCount, enCount);
-
   previewList.innerHTML = '';
-  if (maxRows === 0) {
+  if (segments.length === 0) {
     emptyState.style.display = '';
     previewList.style.display = 'none';
-    alignmentWarningEl.style.display = 'none';
   } else {
     emptyState.style.display = 'none';
     previewList.style.display = '';
     var frag = document.createDocumentFragment();
-    for (var i = 0; i < maxRows; i++) {
-      var arabicText = i < arabicCount ? segments[i].lines.join('\n') : null;
-      var enText = i < enCount ? enLines[i] : '';
-      var mismatchMsg = rowMismatchMessage(i, arabicCount, enCount);
-      frag.appendChild(buildMappingRow(i, arabicText, enText, mismatchMsg));
+    for (var i = 0; i < segments.length; i++) {
+      frag.appendChild(buildPreviewRow(i, segments[i].lines.join('\n')));
     }
     previewList.appendChild(frag);
-
-    var warning = buildAlignmentWarning(arabicCount, enCount);
-    if (warning) {
-      alignmentWarningEl.textContent = warning;
-      alignmentWarningEl.style.display = '';
-    } else {
-      alignmentWarningEl.style.display = 'none';
-    }
   }
 
   statCount.textContent = String(currentCues.length);
@@ -166,10 +101,6 @@ function download() {
 }
 
 textarea.addEventListener('input', function () {
-  render();
-  onChangeCallback();
-});
-translationTextarea.addEventListener('input', function () {
   render();
   onChangeCallback();
 });

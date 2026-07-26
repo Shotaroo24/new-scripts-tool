@@ -12,9 +12,14 @@
 <header>
   <h1>srtgen</h1>
   <p>アラビア語原稿を貼り付けると、CapCut読み込み用のSRT字幕ファイルを生成します</p>
-  <div id="restoreBanner" style="display:none;">
+  <div id="restoreBanner" class="info-banner" style="display:none;">
     <span>前回の続きを復元しました</span>
     <button id="newSessionBtn" type="button">新規作成</button>
+  </div>
+  <div id="legacyTranslationBanner" class="info-banner warning" style="display:none;">
+    <span>旧形式の英訳が移行できませんでした。番号付き貼り付けで再度取り込むか、コピーして手動で反映してください。</span>
+    <button id="legacyTranslationCopyBtn" type="button">コピー</button>
+    <button id="legacyTranslationDismissBtn" type="button">破棄</button>
   </div>
 </header>
 
@@ -22,9 +27,6 @@
   <section class="pane" id="inputPane">
     <label class="field-label" for="manuscript">原稿テキスト</label>
     <textarea id="manuscript" dir="rtl" spellcheck="false" placeholder="ここにアラビア語の原稿を貼り付けてください..."></textarea>
-
-    <label class="field-label" for="translation">英訳（1行 = 1クリップ、改行のみで分割）</label>
-    <textarea id="translation" class="translation-textarea" dir="ltr" spellcheck="false" placeholder="英訳を1行ずつ、アラビア語と同じ順番で入力してください..."></textarea>
 
     <div class="settings-row">
       <div class="field">
@@ -52,7 +54,6 @@
         <span class="stat-label">総尺</span>
       </div>
     </div>
-    <div id="alignmentWarning" class="alignment-warning" style="display:none;"></div>
     <div id="emptyState">原稿を左に貼り付けると、対応付け確認リストがここにリアルタイムで表示されます。</div>
     <div id="previewList" style="display:none;"></div>
   </section>
@@ -71,6 +72,10 @@
       <button id="sBtn" class="editor-btn" title="S: ここで切る">S ここで切る</button>
       <button id="mBtn" class="editor-btn" title="M: 結合">M 結合</button>
       <button id="undoBtn" class="editor-btn" title="Ctrl+Z: 戻す">戻す（Undo）</button>
+    </div>
+    <div class="editor-group">
+      <button id="copyNumberedBtn" class="editor-btn" type="button">番号付きでコピー</button>
+      <button id="pasteTranslationBtn" class="editor-btn" type="button">英訳を貼り付け</button>
     </div>
     <div class="editor-group editor-cps">
       <label for="editorCps">cps</label>
@@ -124,6 +129,7 @@
     <label class="field-label" for="modalArabicText">アラビア語本文</label>
     <textarea id="modalArabicText" dir="rtl" rows="3"></textarea>
     <label class="field-label" for="modalEnglishText">英訳</label>
+    <span id="modalStaleBadge" class="stale-badge" style="display:none;">要再訳</span>
     <input id="modalEnglishText" type="text" dir="ltr">
     <div class="modal-actions">
       <button id="modalAutoSplitBtn" type="button" class="editor-btn">自動で2行に分割</button>
@@ -140,6 +146,36 @@
     <div class="modal-footer">
       <button id="modalCancelBtn" type="button" class="secondary-btn">キャンセル</button>
       <button id="modalSaveBtn" type="button" class="editor-btn primary-btn">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="pasteModal" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <h2>英訳を貼り付け</h2>
+    <textarea id="pasteTextarea" dir="ltr" rows="10" placeholder="番号付きの英訳をここに貼り付けてください..."></textarea>
+    <div class="paste-mode-row">
+      <label><input type="radio" name="pasteApplyMode" value="fillEmpty" checked> 空欄のみ埋める</label>
+      <label><input type="radio" name="pasteApplyMode" value="overwriteAll"> すべて上書き</label>
+    </div>
+    <div class="modal-actions">
+      <button id="pasteCheckBtn" type="button" class="editor-btn">照合</button>
+    </div>
+    <div id="pasteResult" class="paste-result" style="display:none;"></div>
+    <div class="modal-footer">
+      <button id="pasteCancelBtn" type="button" class="secondary-btn">キャンセル</button>
+      <button id="pasteApplyBtn" type="button" class="editor-btn primary-btn" disabled>適用</button>
+    </div>
+  </div>
+</div>
+
+<div id="manualCopyModal" class="modal-overlay" style="display:none;">
+  <div class="modal-box">
+    <h2>手動でコピーしてください</h2>
+    <p class="modal-note">クリップボードへの自動コピーに失敗しました。下のテキストは選択済みです。Ctrl+C（またはCmd+C）でコピーしてください。</p>
+    <textarea id="manualCopyTextarea" readonly rows="10"></textarea>
+    <div class="modal-footer">
+      <button id="manualCopyCloseBtn" type="button" class="editor-btn primary-btn">閉じる</button>
     </div>
   </div>
 </div>

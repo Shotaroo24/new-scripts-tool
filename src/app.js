@@ -3,9 +3,47 @@
 import { STORAGE_KEY, serializeSession, deserializeSession } from './core/session.js';
 import * as manuscript from './ui/manuscript.js';
 import * as timeline from './ui/timeline.js';
+import { copyTextWithFallback } from './ui/clipboard.js';
 
 var restoreBanner = document.getElementById('restoreBanner');
 var newSessionBtn = document.getElementById('newSessionBtn');
+var legacyTranslationBanner = document.getElementById('legacyTranslationBanner');
+var legacyTranslationCopyBtn = document.getElementById('legacyTranslationCopyBtn');
+var legacyTranslationDismissBtn = document.getElementById('legacyTranslationDismissBtn');
+
+// v4→v5移行時、旧英訳textareaの内容がクリップ件数と一致せず割り当てられなかった場合に
+// 1回だけ保持する(§2.3)。番号付き貼り付けの適用が1回成功するか、ユーザーが「破棄」を
+// 押すまでバナーで表示し続ける(指示書3節2)。
+var legacyTranslationText = null;
+
+function updateLegacyTranslationBanner() {
+  legacyTranslationBanner.style.display = legacyTranslationText !== null ? '' : 'none';
+}
+
+function clearLegacyTranslationText() {
+  legacyTranslationText = null;
+  updateLegacyTranslationBanner();
+  scheduleSave();
+}
+
+legacyTranslationCopyBtn.addEventListener('click', function () {
+  if (legacyTranslationText === null) return;
+  copyTextWithFallback(legacyTranslationText).then(function (ok) {
+    if (!ok) return;
+    var original = legacyTranslationCopyBtn.textContent;
+    legacyTranslationCopyBtn.textContent = 'コピーしました';
+    setTimeout(function () { legacyTranslationCopyBtn.textContent = original; }, 1500);
+  });
+});
+
+legacyTranslationDismissBtn.addEventListener('click', function () {
+  clearLegacyTranslationText();
+});
+
+// 番号付き貼り付けの適用が1回成功した時点で、旧テキストの保持は役目を終える。
+timeline.setOnTranslationApplied(function () {
+  if (legacyTranslationText !== null) clearLegacyTranslationText();
+});
 
 // ---- 永続化: 保存(300msデバウンス)・復元 ----
 var saveTimer = null;
@@ -20,9 +58,8 @@ function scheduleSave() {
 function persistSession() {
   try {
     var snap = timeline.getSessionSnapshot();
-    var raw = serializeSession({
+    var state = {
       manuscript: manuscript.textarea.value,
-      translation: manuscript.translationTextarea.value,
       cps: snap.cps,
       bom: manuscript.bomCheckbox.checked,
       mode: snap.mode,
@@ -31,8 +68,9 @@ function persistSession() {
       headTimeMs: snap.headTimeMs,
       calibration: snap.calibration,
       fontSize: snap.fontSize
-    });
-    localStorage.setItem(STORAGE_KEY, raw);
+    };
+    if (legacyTranslationText !== null) state.legacyTranslationText = legacyTranslationText;
+    localStorage.setItem(STORAGE_KEY, serializeSession(state));
   } catch (err) {
     // QuotaExceededError等は握りつぶす。保存に失敗してもアプリは継続動作する。
   }
@@ -54,9 +92,10 @@ function tryRestoreFromStorage() {
   }
 
   manuscript.textarea.value = data.manuscript;
-  manuscript.translationTextarea.value = data.translation;
   manuscript.cpsInput.value = String(data.cps);
   manuscript.bomCheckbox.checked = data.bom;
+  legacyTranslationText = data.legacyTranslationText || null;
+  updateLegacyTranslationBanner();
 
   timeline.setStateFromSession(data);
   manuscript.render();
