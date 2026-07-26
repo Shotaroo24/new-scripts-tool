@@ -1,6 +1,6 @@
 # srtgen
 
-アラビア語の原稿テキストをブラウザに貼り付けると、Filmora読み込み用のSRT字幕ファイルをダウンロードできるツールです。
+アラビア語の原稿テキストをブラウザに貼り付けると、CapCut読み込み用のSRT字幕ファイルをダウンロードできるツールです。
 
 詳細な仕様は [`docs/srtgen-web-spec.md`](./docs/srtgen-web-spec.md) を参照してください。
 
@@ -18,12 +18,10 @@
 
 - `index.html` から ES Modules（`<script type="module">`）で `src/app.js` を読み込む構成
   - `src/core/` … 純粋ロジック（DOM非依存、Node上でテスト可能）
-  - `src/ui/` … DOM wiring（原稿モード・タイムライン編集モード・動画トラック・プレビュー）
-  - `src/export/` … MP4書き出しパイプライン（`vendor/mediabunny.js` に依存する部分はここに閉じ込める）
+  - `src/ui/` … DOM wiring（原稿モード・タイムライン編集モード）
   - `src/app.js` … エントリポイント（状態の保持と各モジュールの配線）
-  - `vendor/mediabunny.js` … [mediabunny](https://mediabunny.dev) の配布ビルドを1ファイルvendorしたもの（MP4書き出し用、npm/ビルドステップなしで利用）
-- フレームワーク・ビルドステップ・外部ライブラリ・CDN依存なし（vendorした`mediabunny.js`のみ例外）
-- 対応ブラウザ: モダンブラウザ（Chrome / Edge / Safari。MP4書き出しにはWebCodecs APIが必要）
+- フレームワーク・ビルドステップ・外部ライブラリ・CDN依存なし
+- 対応ブラウザ: モダンブラウザ（Chrome / Edge / Safari）
 
 ## 原稿テキストの扱い（厳守事項）
 
@@ -37,7 +35,7 @@
 
 ## テスト
 
-`tests/logic.test.js` / `tests/videotrack.test.js` は `src/core/*` を直接importして実行する回帰テストです。`src/core/` 配下を編集した際は、以下のコマンドで受け入れテスト相当の項目が壊れていないか確認してください。
+`tests/logic.test.js` は `src/core/*` を直接importして実行する回帰テストです。`src/core/` 配下を編集した際は、以下のコマンドで受け入れテスト相当の項目が壊れていないか確認してください。
 
 ```
 npm test

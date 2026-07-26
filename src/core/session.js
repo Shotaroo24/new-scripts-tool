@@ -3,28 +3,11 @@
 import { ZOOM_LEVELS } from './time.js';
 
 export var STORAGE_KEY = 'srtgen:session:v1';
-export var SCHEMA_VERSION = 3; // segments・master(fileName/durationMs)の追加に伴い旧v2データは破棄する(§2.2)
-export var TIMELINE_JSON_VERSION = 1; // §5.4
-
-// マスターは未読み込みならnull、読み込み済みなら{fileName,durationMs}(動画ファイル本体は保存しない、§2.2)
-function isValidMaster(master) {
-  if (master === null) return true;
-  if (!master || typeof master !== 'object') return false;
-  if (typeof master.fileName !== 'string') return false;
-  if (typeof master.durationMs !== 'number' || !isFinite(master.durationMs)) return false;
-  return true;
-}
-
-function isValidSegments(segments) {
-  if (!Array.isArray(segments)) return false;
-  for (var i = 0; i < segments.length; i++) {
-    var seg = segments[i];
-    if (!seg || typeof seg !== 'object') return false;
-    if (typeof seg.srcInMs !== 'number' || !isFinite(seg.srcInMs)) return false;
-    if (typeof seg.durMs !== 'number' || !isFinite(seg.durMs)) return false;
-  }
-  return true;
-}
+// v4: 動画トラック機能の撤去に伴いmaster/segmentsを廃止。
+// v3(master/segments付き)のデータは字幕部分のみ読み取り、動画関連フィールドは無視して移行する。
+export var SCHEMA_VERSION = 4;
+// v2: master/segmentsを廃止(§5.4)。v1は字幕部分のみ読み取って移行する。
+export var TIMELINE_JSON_VERSION = 2;
 
 function isValidClip(c) {
   if (!c || typeof c !== 'object') return false;
@@ -45,9 +28,11 @@ function isValidClips(clips) {
 }
 
 // ---- localStorage 永続化: スキーマ検証とシリアライズ(DOMに依存しない純粋部分) ----
+// version 3(動画トラック撤去前)も字幕フィールドは同一構造のため有効として受け入れる
+// (master/segmentsは検証せず単に無視する)。
 export function isValidSessionData(data) {
   if (!data || typeof data !== 'object') return false;
-  if (data.version !== SCHEMA_VERSION) return false;
+  if (data.version !== SCHEMA_VERSION && data.version !== 3) return false;
   if (typeof data.manuscript !== 'string') return false;
   if (typeof data.translation !== 'string') return false;
   if (typeof data.cps !== 'number' || !isFinite(data.cps)) return false;
@@ -58,8 +43,6 @@ export function isValidSessionData(data) {
   if (typeof data.headTimeMs !== 'number' || !isFinite(data.headTimeMs)) return false;
   if (typeof data.calibration !== 'number' || !isFinite(data.calibration)) return false;
   if (typeof data.fontSize !== 'number' || !isFinite(data.fontSize) || data.fontSize <= 0) return false;
-  if (!isValidMaster(data.master)) return false;
-  if (!isValidSegments(data.segments)) return false;
   return true;
 }
 
@@ -77,11 +60,7 @@ export function serializeSession(state) {
     zoomIndex: state.zoomIndex,
     headTimeMs: Math.round(state.headTimeMs),
     calibration: state.calibration,
-    fontSize: state.fontSize,
-    master: state.master ? { fileName: state.master.fileName, durationMs: state.master.durationMs } : null,
-    segments: state.segments.map(function (s) {
-      return { srcInMs: s.srcInMs, durMs: s.durMs };
-    })
+    fontSize: state.fontSize
   });
 }
 
@@ -98,13 +77,13 @@ export function deserializeSession(raw) {
 }
 
 // ---- timeline.json(セーブ/ロード形式、§5.4) ----
-// 外部レンダラー受け渡し用ではなく作業状態(master/segments/subs/cps/style)の保存・復元が主目的。
+// 作業状態(subs/cps/style)の保存・復元が主目的。
 // localStorageセッション(manuscript/translation/mode/zoom/headTimeMs等)とは別スキーマ・別バージョン管理。
+// version 1(master/segments付き)も字幕フィールドは同一構造のため有効として受け入れる
+// (master/segmentsは検証せず単に無視する)。
 export function isValidTimelineJson(data) {
   if (!data || typeof data !== 'object') return false;
-  if (data.version !== TIMELINE_JSON_VERSION) return false;
-  if (!isValidMaster(data.master)) return false;
-  if (!isValidSegments(data.segments)) return false;
+  if (data.version !== TIMELINE_JSON_VERSION && data.version !== 1) return false;
   if (!isValidClips(data.subs)) return false;
   if (typeof data.cps !== 'number' || !isFinite(data.cps)) return false;
   if (!data.style || typeof data.style !== 'object') return false;
@@ -116,10 +95,6 @@ export function isValidTimelineJson(data) {
 export function serializeTimelineJson(state) {
   return JSON.stringify({
     version: TIMELINE_JSON_VERSION,
-    master: state.master ? { fileName: state.master.fileName, durationMs: state.master.durationMs } : null,
-    segments: state.segments.map(function (s) {
-      return { srcInMs: s.srcInMs, durMs: s.durMs };
-    }),
     subs: state.subs.map(function (c) {
       return { text: c.text, durMs: c.durMs, edited: c.edited, delim: c.delim, en: c.en };
     }),

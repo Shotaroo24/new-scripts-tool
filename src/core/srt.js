@@ -2,7 +2,7 @@
 
 import { formatSrtTime } from './time.js';
 
-// SRT改行コード。Filmora実機テストでCRLFが必要な場合はここを '\r\n' に変更する。
+// SRT改行コード。CapCut実機テストでCRLFが必要な場合はここを '\r\n' に変更する。
 export var LINE_BREAK = '\n';
 
 export function buildSrt(cues, useBom) {

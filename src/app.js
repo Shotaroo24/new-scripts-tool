@@ -30,9 +30,7 @@ function persistSession() {
       zoomIndex: snap.zoomIndex,
       headTimeMs: snap.headTimeMs,
       calibration: snap.calibration,
-      fontSize: snap.fontSize,
-      master: snap.master,
-      segments: snap.segments
+      fontSize: snap.fontSize
     });
     localStorage.setItem(STORAGE_KEY, raw);
   } catch (err) {

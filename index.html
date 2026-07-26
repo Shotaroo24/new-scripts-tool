@@ -11,7 +11,7 @@
 
 <header>
   <h1>srtgen</h1>
-  <p>アラビア語原稿を貼り付けると、Filmora読み込み用のSRT字幕ファイルを生成します</p>
+  <p>アラビア語原稿を貼り付けると、CapCut読み込み用のSRT字幕ファイルを生成します</p>
   <div id="restoreBanner" style="display:none;">
     <span>前回の続きを復元しました</span>
     <button id="newSessionBtn" type="button">新規作成</button>
@@ -76,41 +76,24 @@
       <span id="editorCpsValue">12</span>
     </div>
     <span class="editor-sep"></span>
-    <div class="master-control">
-      <button id="masterLoadBtn" class="editor-btn" type="button">マスター読み込み</button>
-      <input type="file" id="masterFileInput" accept="video/*" style="display:none;">
-      <span class="master-status" id="masterStatus"></span>
-    </div>
-    <span class="editor-sep"></span>
     <div class="timeline-json-control">
       <button id="saveTimelineJsonBtn" class="editor-btn" type="button">JSON保存</button>
       <button id="loadTimelineJsonBtn" class="editor-btn" type="button">JSON読み込み</button>
       <input type="file" id="timelineJsonFileInput" accept="application/json" style="display:none;">
     </div>
     <span class="editor-sep"></span>
-    <button id="exportMp4Btn" class="editor-btn primary-btn" type="button" disabled>MP4書き出し</button>
-    <span class="editor-sep"></span>
     <button id="backBtn" class="editor-btn secondary-btn">原稿に戻る</button>
     <button id="downloadEditorBtn" class="editor-btn primary-btn">SRTダウンロード</button>
     <div class="editor-hint" id="editorHint"></div>
   </div>
 
-  <div class="export-progress-row" id="exportProgressRow" style="display:none;">
-    <progress id="exportProgressBar" max="1" value="0"></progress>
-    <span id="exportProgressText"></span>
-    <button id="exportCancelBtn" class="editor-btn" type="button">キャンセル</button>
-  </div>
-
   <div class="preview-stage" id="previewStage">
     <div class="preview-frame" id="previewFrame">
-      <video id="masterVideoEl" muted playsinline style="display:none;"></video>
-      <canvas id="previewCanvas" style="display:none;"></canvas>
       <div class="safe-guide-box" id="previewSafeGuide"></div>
       <div class="subtitle-text" id="previewSubtitleText"></div>
     </div>
     <div class="preview-translation" id="previewTranslationText"></div>
     <div class="preview-judge" id="previewJudgeBadge"></div>
-    <div class="master-warning" id="masterWarning" style="display:none;"></div>
     <div class="preview-controls">
       <label>倍率(calibration)
         <input type="range" id="calibrationInput" min="0.80" max="1.30" step="0.01" value="1">
@@ -125,11 +108,8 @@
   <div class="timeline-wrap" id="timelineWrap">
     <div class="timeline-inner" id="timelineInner">
       <div class="ruler" id="ruler"></div>
-      <div class="track-row" id="subtitleTrackRow" data-track="subtitle">
+      <div class="track-row" id="subtitleTrackRow">
         <div class="clips-track" id="clipsTrack"></div>
-      </div>
-      <div class="track-row" id="videoTrackRow" data-track="video" style="display:none;">
-        <div class="video-track" id="videoTrack"></div>
       </div>
       <div class="playhead" id="playhead"><div class="playhead-knob"></div></div>
     </div>

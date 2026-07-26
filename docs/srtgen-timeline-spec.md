@@ -103,8 +103,8 @@
 - 字幕のベースラインは映像下端から `SUBTITLE_BASELINE_FROM_BOTTOM = 390`（1080px基準、実機実測値）の位置に置く。実装上は字幕テキストのコンテナ要素の下端をこの位置に固定し（`position:absolute; bottom: 390×(プレビュー幅/1080)px`）、2行の場合は上方向に積む近似とする。
 
 ### 5.2 フォントとストローク
-- フォントは `font-family: "Times New Roman", serif; font-weight: bold`（Filmoraの「Times New Roman Negreta」= Times New Roman Boldに相当）。
-- Filmoraのフォントサイズ数値は1080×1920キャンバス上のemサイズとして扱う（既定 `FONT_SIZE_DEFAULT = 55`）。
+- フォントは `font-family: "Times New Roman", serif; font-weight: bold`（CapCutの「Times New Roman Negreta」= Times New Roman Boldに相当）。
+- CapCutのフォントサイズ数値は1080×1920キャンバス上のemサイズとして扱う（既定 `FONT_SIZE_DEFAULT = 55`）。
 - 実測・判定用フォントサイズ（1080px空間、プレビュー縮尺は掛けない）: `fontSize × calibration`。
 - プレビュー表示用CSSフォントサイズ: `fontSize × calibration × (プレビュー幅 / 1080)`。
 - 行間は `line-height: 1.3` を明示指定する。
@@ -205,7 +205,7 @@
 - 動画ファイルの読み込み・プレビュー（将来の拡張候補。データモデルが壊れない範囲で拡張点を意識するのは可だが、実装しない）
 - 外部ライブラリの導入（React・ドラッグ系ライブラリ等一切不可。Vanilla JS + Pointer Events）
 - Redo、複数選択、クリップの並べ替え（順序は原稿順で固定）
-- fpsスナップ（Filmora実機で1フレームの隙間が出た場合に別途検討）
+- fpsスナップ（CapCut実機で1フレームの隙間が出た場合に別途検討）
 - 英訳のSRT出力、英訳の自動翻訳
 - 英訳側の自動アライメント推定（ズレ修正は手動操作のみ。4.2節の強調表示は件数比較のみで内容は一切見ない）
 - JSONエクスポート／インポート（localStorageによるセッション自動保存とは別。手動でのファイル入出力は行わない）
