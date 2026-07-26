@@ -60,30 +60,32 @@
 
 <div id="editorView" style="display:none;">
   <div class="editor-header">
-    <button id="playPauseBtn" class="editor-btn" title="スペース: 再生/停止">▶</button>
-    <button id="upBtn" class="editor-btn" title="↑: 前のクリップへ">↑</button>
-    <button id="downBtn" class="editor-btn" title="↓: 次のクリップへ">↓</button>
-    <button id="playbackRateBtn" class="editor-btn" title="L: 再生速度を切り替え">1x</button>
-    <span class="editor-time" id="timeDisplay">0:00.0 / 0:00.0</span>
-    <span class="editor-sep"></span>
-    <button id="sBtn" class="editor-btn" title="S: ここで切る">S ここで切る</button>
-    <button id="mBtn" class="editor-btn" title="M: 結合">M 結合</button>
-    <button id="undoBtn" class="editor-btn" title="Ctrl+Z: 戻す">戻す（Undo）</button>
-    <span class="editor-sep"></span>
-    <div class="editor-cps">
+    <div class="editor-group">
+      <button id="playPauseBtn" class="editor-btn" title="スペース: 再生/停止">▶</button>
+      <button id="upBtn" class="editor-btn" title="↑: 前のクリップへ">↑</button>
+      <button id="downBtn" class="editor-btn" title="↓: 次のクリップへ">↓</button>
+      <button id="playbackRateBtn" class="editor-btn" title="L: 再生速度を切り替え">1x</button>
+      <span class="editor-time" id="timeDisplay">0:00.0 / 0:00.0</span>
+    </div>
+    <div class="editor-group">
+      <button id="sBtn" class="editor-btn" title="S: ここで切る">S ここで切る</button>
+      <button id="mBtn" class="editor-btn" title="M: 結合">M 結合</button>
+      <button id="undoBtn" class="editor-btn" title="Ctrl+Z: 戻す">戻す（Undo）</button>
+    </div>
+    <div class="editor-group editor-cps">
       <label for="editorCps">cps</label>
       <input type="range" id="editorCps" min="8" max="18" step="0.5" value="12">
       <span id="editorCpsValue">12</span>
     </div>
-    <span class="editor-sep"></span>
-    <div class="timeline-json-control">
+    <div class="editor-group timeline-json-control">
       <button id="saveTimelineJsonBtn" class="editor-btn" type="button">JSON保存</button>
       <button id="loadTimelineJsonBtn" class="editor-btn" type="button">JSON読み込み</button>
       <input type="file" id="timelineJsonFileInput" accept="application/json" style="display:none;">
     </div>
-    <span class="editor-sep"></span>
-    <button id="backBtn" class="editor-btn secondary-btn">原稿に戻る</button>
-    <button id="downloadEditorBtn" class="editor-btn primary-btn">SRTダウンロード</button>
+    <div class="editor-group">
+      <button id="backBtn" class="editor-btn secondary-btn">原稿に戻る</button>
+      <button id="downloadEditorBtn" class="editor-btn primary-btn">SRTダウンロード</button>
+    </div>
     <div class="editor-hint" id="editorHint"></div>
   </div>
 

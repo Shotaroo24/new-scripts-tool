@@ -310,9 +310,20 @@ button.secondary-btn:disabled {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   padding: 14px 0;
   border-bottom: 1px solid var(--panel-border);
+}
+.editor-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+  border-left: 1px solid var(--panel-border);
+}
+.editor-group:first-child {
+  padding-left: 0;
+  border-left: none;
 }
 .editor-btn {
   padding: 8px 12px;
@@ -343,12 +354,6 @@ button.secondary-btn:disabled {
   font-size: 14px;
   color: var(--text-dim);
   min-width: 140px;
-}
-.editor-sep {
-  width: 1px;
-  align-self: stretch;
-  background: var(--panel-border);
-  margin: 0 4px;
 }
 .editor-cps {
   display: flex;
