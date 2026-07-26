@@ -18,8 +18,7 @@ import {
   FONT_SIZE_DEFAULT, CALIBRATION_DEFAULT, CALIBRATION_MIN, CALIBRATION_MAX
 } from '../src/core/style.js';
 import {
-  isValidSessionData, serializeSession, deserializeSession, migrateV4ToV5,
-  serializeTimelineJson, deserializeTimelineJson
+  isValidSessionData, serializeSession, deserializeSession, migrateV4ToV5
 } from '../src/core/session.js';
 
 var passCount = 0;
@@ -839,86 +838,6 @@ function makeSubs(dursMs) {
       clips: [], zoomIndex: 0, headTimeMs: 0, calibration: 1, fontSize: 55
     }) === true,
     '#local2 クリップ0件でも有効なセッションとして扱われる'
-  );
-})();
-
-// --- §7-6: timeline.json ラウンドトリップ・version不一致の拒否(v3) ---
-(function () {
-  var state = {
-    subs: [
-      { text: 'مرحبا', durMs: 1270, edited: true, delim: '', translation: 'Hello', translationStale: false },
-      { text: 'كيف حالك', durMs: 900, edited: false, delim: '؟', translation: 'How are you', translationStale: true }
-    ],
-    cps: 12,
-    style: { fontSize: 55, calibration: 1.0 }
-  };
-  var raw = serializeTimelineJson(state);
-  var restored = deserializeTimelineJson(raw);
-
-  assert(restored !== null, '#7-6 正常なtimeline.jsonはシリアライズ/デシリアライズを往復できる');
-  assert(restored.version === 3, '#7-6 versionが3で保存される');
-  assert(
-    JSON.stringify(restored.subs) === JSON.stringify(state.subs),
-    '#7-6 subsが完全一致する -> ' + JSON.stringify(restored.subs)
-  );
-  assert(restored.cps === state.cps, '#7-6 cpsが完全一致する');
-  assert(
-    restored.style.fontSize === state.style.fontSize && restored.style.calibration === state.style.calibration,
-    '#7-6 styleが完全一致する'
-  );
-  assert(!('master' in JSON.parse(raw)), '#7-6 保存データにmasterフィールドが含まれない');
-  assert(!('segments' in JSON.parse(raw)), '#7-6 保存データにsegmentsフィールドが含まれない');
-
-  // 旧v2(en方式)のtimeline.jsonはv3へ無条件で移行される(1クリップ=1翻訳で件数ズレの余地がないため)
-  var v2raw = JSON.stringify({
-    version: 2,
-    subs: [
-      { text: 'مرحبا', durMs: 1270, edited: true, delim: '', en: 'Hello' },
-      { text: 'كيف حالك', durMs: 900, edited: false, delim: '؟', en: 'How are you' }
-    ],
-    cps: 12, style: { fontSize: 55, calibration: 1 }
-  });
-  var restoredV2 = deserializeTimelineJson(v2raw);
-  assert(restoredV2 !== null, '#7-6 旧v2(en方式)のtimeline.jsonも読み込める');
-  assert(restoredV2.version === 3, '#7-6 v2は読み込み時にv3へ移行される');
-  assert(
-    restoredV2.subs[0].translation === 'Hello' && restoredV2.subs[1].translation === 'How are you',
-    '#7-6 v2のenがそのままtranslationへ移行される'
-  );
-  assert(restoredV2.subs[0].translationStale === false, '#7-6 v2からの移行はtranslationStale:falseになる');
-
-  // 旧v1(master/segments付き)のtimeline.jsonも同じ経路で字幕部分のみ読み取って受け入れる
-  var v1raw = JSON.stringify({
-    version: 1,
-    master: { fileName: 'master_capcut.mp4', durationMs: 67000 },
-    segments: [{ srcInMs: 0, durMs: 16000 }],
-    subs: [
-      { text: 'مرحبا', durMs: 1270, edited: true, delim: '', en: 'Hello' },
-      { text: 'كيف حالك', durMs: 900, edited: false, delim: '؟', en: 'How are you' }
-    ],
-    cps: 12, style: { fontSize: 55, calibration: 1 }
-  });
-  var restoredV1 = deserializeTimelineJson(v1raw);
-  assert(restoredV1 !== null, '#7-6 旧v1(master/segments付き)のtimeline.jsonも字幕部分は復元できる');
-  assert(restoredV1.subs.length === 2, '#7-6 v1データのsubsが読み取れる');
-
-  // 未知versionは読み込み拒否
-  assert(
-    deserializeTimelineJson(JSON.stringify(Object.assign({}, JSON.parse(raw), { version: 99 }))) === null,
-    '#7-6 未知version(v99)のtimeline.jsonは読み込み拒否されnullを返す'
-  );
-  assert(deserializeTimelineJson('{"version":3}') === null, '#7-6 必須フィールド欠落時はnullを返す');
-  assert(deserializeTimelineJson('これはJSONではない') === null, '#7-6 JSONパース失敗時はnullを返す(例外を投げない)');
-  assert(deserializeTimelineJson('null') === null, '#7-6 nullの場合はnullを返す');
-
-  // subs内の型不正は拒否(session.jsのisValidClipsを共有していることの確認)
-  assert(
-    deserializeTimelineJson(JSON.stringify({
-      version: 3,
-      subs: [{ text: 'x', durMs: 'not-a-number', edited: false, delim: '', translation: '', translationStale: false }],
-      cps: 12, style: { fontSize: 55, calibration: 1 }
-    })) === null,
-    '#7-6 subs内の型不正はnullを返す'
   );
 })();
 

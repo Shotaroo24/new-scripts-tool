@@ -17,14 +17,21 @@ var statDuration = document.getElementById('statDuration');
 
 var currentCues = [];
 var onChangeCallback = function () {};
+var translationsProvider = null;
 
 export function setOnChange(fn) {
   onChangeCallback = fn;
 }
 
-// プレビューリストの1行を構築する(アラビア語本文+文字数のみ。英訳はタイムライン
-// モードでクリップ単位に付与するため、ここでは扱わない)。
-function buildPreviewRow(index, arabicText) {
+// タイムライン側のsubsから、現在の分割状態に対応する英訳一覧を取得するための
+// プロバイダを登録する(src/app.jsが配線する)。text/segmentCountに対して
+// 対応が取れない場合はnullを返してよい(その場合は英訳を表示しない)。
+export function setTranslationsProvider(fn) {
+  translationsProvider = fn;
+}
+
+// プレビューリストの1行を構築する(アラビア語本文+文字数+英訳サブテキスト)。
+function buildPreviewRow(index, arabicText, translationInfo) {
   var row = document.createElement('div');
   row.className = 'mapping-row';
 
@@ -45,6 +52,14 @@ function buildPreviewRow(index, arabicText) {
   row.appendChild(arDiv);
   row.appendChild(countDiv);
 
+  if (translationInfo) {
+    var enDiv = document.createElement('div');
+    enDiv.className = 'mapping-en' + (translationInfo.translation ? '' : ' mapping-en-empty') +
+      (translationInfo.translationStale ? ' mapping-en-stale' : '');
+    enDiv.textContent = translationInfo.translation || '英訳なし';
+    row.appendChild(enDiv);
+  }
+
   return row;
 }
 
@@ -61,9 +76,10 @@ export function render() {
   } else {
     emptyState.style.display = 'none';
     previewList.style.display = '';
+    var translations = translationsProvider ? translationsProvider(text, segments.length) : null;
     var frag = document.createDocumentFragment();
     for (var i = 0; i < segments.length; i++) {
-      frag.appendChild(buildPreviewRow(i, segments[i].lines.join('\n')));
+      frag.appendChild(buildPreviewRow(i, segments[i].lines.join('\n'), translations ? translations[i] : null));
     }
     previewList.appendChild(frag);
   }

@@ -2,7 +2,7 @@
 
 import {
   ZOOM_LEVELS, DEFAULT_ZOOM_INDEX, clipAt, computeStartsMs, totalDurationMs,
-  formatClock, clampZoomIndex, msToPx, pxToMs, pickTickIntervalSec, pad
+  formatClock, clampZoomIndex, msToPx, pxToMs, pickTickIntervalSec
 } from '../core/time.js';
 import { segmentManuscript } from '../core/segment.js';
 import {
@@ -11,7 +11,6 @@ import {
   pushHistory, popHistory
 } from '../core/subs.js';
 import { buildSrt } from '../core/srt.js';
-import { serializeTimelineJson, deserializeTimelineJson } from '../core/session.js';
 import { formatNumberedClips, parseNumberedTranslation } from '../core/translation.js';
 import { copyTextWithFallback } from './clipboard.js';
 import {
@@ -20,7 +19,9 @@ import {
   clampCalibration, measurementFontSize, previewFontSizePx, previewStrokeWidthPx,
   previewBaselineOffsetPx, previewSafeMargins, judgeLineCount, autoSplitToTwoLines, collapseToOneLine
 } from '../core/style.js';
-import { textarea, cpsInput, bomCheckbox, toTimelineBtn, render, downloadSrtContent } from './manuscript.js';
+import {
+  textarea, cpsInput, bomCheckbox, toTimelineBtn, render, downloadSrtContent, setTranslationsProvider
+} from './manuscript.js';
 
 var mainView = document.getElementById('mainView');
 var editorView = document.getElementById('editorView');
@@ -53,11 +54,9 @@ var ruler = document.getElementById('ruler');
 var clipsTrack = document.getElementById('clipsTrack');
 var playhead = document.getElementById('playhead');
 var playbackRateBtn = document.getElementById('playbackRateBtn');
-var saveTimelineJsonBtn = document.getElementById('saveTimelineJsonBtn');
-var loadTimelineJsonBtn = document.getElementById('loadTimelineJsonBtn');
-var timelineJsonFileInput = document.getElementById('timelineJsonFileInput');
 var copyNumberedBtn = document.getElementById('copyNumberedBtn');
 var pasteTranslationBtn = document.getElementById('pasteTranslationBtn');
+var previewHint = document.getElementById('previewHint');
 
 var pasteModal = document.getElementById('pasteModal');
 var pasteTextarea = document.getElementById('pasteTextarea');
@@ -142,6 +141,7 @@ export function setStateFromSession(data) {
   calibrationInput.value = String(calibration);
   calibrationValue.textContent = calibration.toFixed(2);
   fontSizeInput.value = String(fontSize);
+  updateDownloadEditorState();
 }
 
 // 復元データのmodeが'edit'だった場合のみ、エディタ表示へ切り替える。
@@ -165,6 +165,7 @@ function currentPxPerSec() {
 
 function setHint(msg) {
   editorHint.textContent = msg || '';
+  if (previewHint) previewHint.textContent = msg || '';
 }
 
 function currentClipIndex() {
@@ -394,6 +395,8 @@ function renderTimeline() {
 
 function updateDownloadEditorState() {
   downloadEditorBtn.disabled = subs.length === 0;
+  copyNumberedBtn.disabled = subs.length === 0;
+  pasteTranslationBtn.disabled = subs.length === 0;
 }
 
 function autoScrollToPlayhead() {
@@ -528,6 +531,7 @@ function doMerge() {
 }
 
 // 「番号付きでコピー」(§3): アラビア語本文を番号付きテキストとしてクリップボードへ出力する。
+// 入力画面(§2)・エディタのいずれからも同じsubsを対象に動作する。
 function doCopyNumbered() {
   if (subs.length === 0) return;
   var text = formatNumberedClips(subs);
@@ -535,6 +539,18 @@ function doCopyNumbered() {
     if (ok) setHint(subs.length + '行をコピーしました');
   });
 }
+
+// 入力画面(mainView)の右側クリップ一覧は、現在のsubsが現在の原稿テキストと
+// 一致している場合に限り英訳を表示する(一致しない場合は再構築されておらず
+// 対応が取れないため、表示しない)。src/app.jsからmanuscript.setTranslationsProviderへ
+// 配線される。
+function provideTranslationsForPreview(text, segmentCount) {
+  if (!hasTimelineState) return null;
+  if (subs.length !== segmentCount) return null;
+  if (!textEquals(reconstructManuscript(subs), text)) return null;
+  return subs.map(function (s) { return { translation: s.translation, translationStale: s.translationStale }; });
+}
+setTranslationsProvider(provideTranslationsForPreview);
 
 // 英訳貼り付けモーダル(§4-6)。直近の「照合」結果をpasteParsedに保持し、
 // テキストが変更されたら再照合を必須にする(適用ボタンを無効化)。
@@ -619,7 +635,7 @@ function doPasteApply() {
   } else {
     subs = next;
     setHint(appliedCount + '件の訳文を適用しました');
-    renderTimeline();
+    if (mode === 'edit') renderTimeline(); else render();
     onChangeCallback();
     onTranslationAppliedCallback();
   }
@@ -791,67 +807,6 @@ function setZoom(newIndex) {
 function zoomIn() { setZoom(zoomIndex + 1); }
 function zoomOut() { setZoom(zoomIndex - 1); }
 
-function downloadBlob(blob, fileNamePrefix, ext) {
-  var url = URL.createObjectURL(blob);
-  var now = new Date();
-  var fname = fileNamePrefix + '_' +
-    now.getFullYear() + pad(now.getMonth() + 1, 2) + pad(now.getDate(), 2) + '_' +
-    pad(now.getHours(), 2) + pad(now.getMinutes(), 2) + '.' + ext;
-  var a = document.createElement('a');
-  a.href = url;
-  a.download = fname;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
-}
-
-// timeline.json保存(§5.4)。subs/cps/styleのみを対象とする
-// (原稿テキスト・翻訳・モード・ズーム等はlocalStorageセッションの管轄で、timeline.jsonには含めない)。
-function saveTimelineJson() {
-  var raw = serializeTimelineJson({
-    subs: subs,
-    cps: currentCps,
-    style: { fontSize: fontSize, calibration: calibration }
-  });
-  downloadBlob(new Blob([raw], { type: 'application/json' }), 'timeline', 'json');
-}
-
-// timeline.json読み込み(§5.4)。version不一致・スキーマ不正は読み込み拒否する。
-function loadTimelineJsonFile(file) {
-  var reader = new FileReader();
-  reader.onload = function () {
-    var data = deserializeTimelineJson(String(reader.result));
-    if (!data) {
-      setHint('timeline.jsonの読み込みに失敗しました(バージョン不一致または形式不正)');
-      return;
-    }
-
-    history = [];
-    subs = data.subs.map(function (c) {
-      return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited, translation: c.translation, translationStale: c.translationStale };
-    });
-    hasTimelineState = subs.length > 0;
-    currentCps = data.cps;
-    editorCps.value = String(currentCps);
-    editorCpsValue.textContent = String(currentCps);
-    cpsInput.value = String(currentCps);
-    calibration = clampCalibration(data.style.calibration);
-    fontSize = data.style.fontSize;
-    calibrationInput.value = String(calibration);
-    calibrationValue.textContent = calibration.toFixed(2);
-    fontSizeInput.value = String(fontSize);
-
-    var total = totalDurationMs(subs);
-    if (headTimeMs > total) headTimeMs = total;
-
-    renderTimeline();
-    setHint('timeline.jsonを読み込みました');
-    onChangeCallback();
-  };
-  reader.readAsText(file);
-}
-
 toTimelineBtn.addEventListener('click', enterEditMode);
 backBtn.addEventListener('click', exitEditMode);
 playPauseBtn.addEventListener('click', togglePlay);
@@ -872,16 +827,6 @@ pasteTextarea.addEventListener('input', function () {
   pasteParsed = null;
 });
 downloadEditorBtn.addEventListener('click', downloadFromSubs);
-saveTimelineJsonBtn.addEventListener('click', saveTimelineJson);
-loadTimelineJsonBtn.addEventListener('click', function () {
-  timelineJsonFileInput.click();
-});
-timelineJsonFileInput.addEventListener('change', function () {
-  var file = timelineJsonFileInput.files[0];
-  timelineJsonFileInput.value = '';
-  if (!file) return;
-  loadTimelineJsonFile(file);
-});
 
 ruler.addEventListener('click', function (e) {
   var rect = ruler.getBoundingClientRect();

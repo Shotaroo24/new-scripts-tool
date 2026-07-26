@@ -10,10 +10,6 @@ export var SCHEMA_VERSION = 5;
 // v3: 動画トラック機能の撤去に伴いmaster/segmentsを廃止。v3(master/segments付き)の
 // データは字幕部分のみ読み取り、動画関連フィールドは無視して移行する(v4からの継承)。
 var LEGACY_SCHEMA_VERSION = 4;
-// timeline.json v3: 英訳フィールドをen→translation/translationStaleに改名。
-// v2は1クリップ=1翻訳で件数ズレの余地がないため、無条件でそのまま移行する。
-export var TIMELINE_JSON_VERSION = 3;
-var LEGACY_TIMELINE_JSON_VERSION = 2;
 
 function isValidClip(c) {
   if (!c || typeof c !== 'object') return false;
@@ -159,70 +155,5 @@ export function deserializeSession(raw) {
   }
   if (isValidSessionData(data)) return data;
   if (isValidLegacySessionData(data)) return migrateV4ToV5(data);
-  return null;
-}
-
-// ---- timeline.json(セーブ/ロード形式、§5.4) ----
-// 作業状態(subs/cps/style)の保存・復元が主目的。
-// localStorageセッション(manuscript/mode/zoom/headTimeMs等)とは別スキーマ・別バージョン管理。
-export function isValidTimelineJson(data) {
-  if (!data || typeof data !== 'object') return false;
-  if (data.version !== TIMELINE_JSON_VERSION) return false;
-  if (!isValidClips(data.subs)) return false;
-  if (typeof data.cps !== 'number' || !isFinite(data.cps)) return false;
-  if (!data.style || typeof data.style !== 'object') return false;
-  if (typeof data.style.fontSize !== 'number' || !isFinite(data.style.fontSize) || data.style.fontSize <= 0) return false;
-  if (typeof data.style.calibration !== 'number' || !isFinite(data.style.calibration)) return false;
-  return true;
-}
-
-// version 1(master/segments付き)も字幕フィールドは同一構造のため有効として受け入れる
-// (master/segmentsは検証せず単に無視する)。
-function isValidLegacyTimelineJson(data) {
-  if (!data || typeof data !== 'object') return false;
-  if (data.version !== LEGACY_TIMELINE_JSON_VERSION && data.version !== 1) return false;
-  if (!isValidLegacyClips(data.subs)) return false;
-  if (typeof data.cps !== 'number' || !isFinite(data.cps)) return false;
-  if (!data.style || typeof data.style !== 'object') return false;
-  if (typeof data.style.fontSize !== 'number' || !isFinite(data.style.fontSize) || data.style.fontSize <= 0) return false;
-  if (typeof data.style.calibration !== 'number' || !isFinite(data.style.calibration)) return false;
-  return true;
-}
-
-// v2(en方式)のtimeline.jsonをv3へ移行する。1クリップ=1翻訳で件数ズレの余地がないため
-// 無条件でtranslationへ引き継ぐ(translationStaleは常にfalse)。
-export function migrateTimelineJsonV2ToV3(data) {
-  return {
-    version: TIMELINE_JSON_VERSION,
-    subs: data.subs.map(function (c) {
-      return { text: c.text, durMs: c.durMs, delim: c.delim, edited: c.edited, translation: c.en, translationStale: false };
-    }),
-    cps: data.cps,
-    style: { fontSize: data.style.fontSize, calibration: data.style.calibration }
-  };
-}
-
-export function serializeTimelineJson(state) {
-  return JSON.stringify({
-    version: TIMELINE_JSON_VERSION,
-    subs: state.subs.map(function (c) {
-      return { text: c.text, durMs: c.durMs, edited: c.edited, delim: c.delim, translation: c.translation, translationStale: c.translationStale };
-    }),
-    cps: state.cps,
-    style: { fontSize: state.style.fontSize, calibration: state.style.calibration }
-  }, null, 2);
-}
-
-// version不一致・スキーマ不正は読み込み拒否する(原稿テキストと同じく黙って改変・補正しない)。
-// ただしv2(旧en方式)は正当な旧世代データのため、v3へ移行してから返す。
-export function deserializeTimelineJson(raw) {
-  var data;
-  try {
-    data = JSON.parse(raw);
-  } catch (err) {
-    return null;
-  }
-  if (isValidTimelineJson(data)) return data;
-  if (isValidLegacyTimelineJson(data)) return migrateTimelineJsonV2ToV3(data);
   return null;
 }

@@ -54,6 +54,11 @@
         <span class="stat-label">総尺</span>
       </div>
     </div>
+    <div class="preview-actions">
+      <button id="copyNumberedBtn" class="editor-btn" type="button" disabled>番号付きでコピー</button>
+      <button id="pasteTranslationBtn" class="editor-btn" type="button" disabled>英訳を貼り付け</button>
+    </div>
+    <div class="preview-hint" id="previewHint"></div>
     <div id="emptyState">原稿を左に貼り付けると、対応付け確認リストがここにリアルタイムで表示されます。</div>
     <div id="previewList" style="display:none;"></div>
   </section>
@@ -73,19 +78,10 @@
       <button id="mBtn" class="editor-btn" title="M: 結合">M 結合</button>
       <button id="undoBtn" class="editor-btn" title="Ctrl+Z: 戻す">戻す（Undo）</button>
     </div>
-    <div class="editor-group">
-      <button id="copyNumberedBtn" class="editor-btn" type="button">番号付きでコピー</button>
-      <button id="pasteTranslationBtn" class="editor-btn" type="button">英訳を貼り付け</button>
-    </div>
     <div class="editor-group editor-cps">
       <label for="editorCps">cps</label>
       <input type="range" id="editorCps" min="8" max="18" step="0.5" value="12">
       <span id="editorCpsValue">12</span>
-    </div>
-    <div class="editor-group timeline-json-control">
-      <button id="saveTimelineJsonBtn" class="editor-btn" type="button">JSON保存</button>
-      <button id="loadTimelineJsonBtn" class="editor-btn" type="button">JSON読み込み</button>
-      <input type="file" id="timelineJsonFileInput" accept="application/json" style="display:none;">
     </div>
     <div class="editor-group">
       <button id="backBtn" class="editor-btn secondary-btn">原稿に戻る</button>
