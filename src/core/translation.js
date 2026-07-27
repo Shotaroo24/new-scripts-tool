@@ -26,10 +26,11 @@ function stripBidiControls(s) {
   return s.replace(BIDI_CONTROL_RE, '');
 }
 
-// クリップ配列を「番号.LRM本文」形式のテキストへ整形する(番号付きでコピー用)。
-// 空クリップも欠番にせず番号を維持する。行区切りは\n。
-export function formatNumberedClips(subs) {
-  return subs.map(function (s, i) {
+// {text: string}を持つ配列を「番号.LRM本文」形式のテキストへ整形する(番号付きでコピー用)。
+// subs(タイムライン生成後のクリップ)・segmentManuscriptの結果(text未生成時のフォールバック)
+// のどちらも渡せる(.textしか参照しない)。空本文も欠番にせず番号を維持する。行区切りは\n。
+export function formatNumberedClips(items) {
+  return items.map(function (s, i) {
     return (i + 1) + '.' + LRM + s.text;
   }).join('\n');
 }

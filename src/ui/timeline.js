@@ -528,12 +528,20 @@ function doMerge() {
 }
 
 // 「番号付きでコピー」(§3): アラビア語本文を番号付きテキストとしてクリップボードへ出力する。
-// 入力画面(§2)・エディタのいずれからも同じsubsを対象に動作する。
+// 読み取り専用のため、原稿が空でない限り常に実行できる(タイムライン往復は不要)。
+// subsが現在の原稿と一致していればsubsから(タイムラインでの分割/結合を尊重)、
+// 一致していなければ現在の原稿をその場でsegmentManuscriptした結果から生成する。
 function doCopyNumbered() {
-  if (subs.length === 0) return;
-  var text = formatNumberedClips(subs);
-  copyTextWithFallback(text).then(function (ok) {
-    if (ok) setHint(subs.length + '行をコピーしました');
+  var text = textarea.value;
+  var segments = segmentManuscript(text);
+  if (segments.length === 0) return;
+
+  var source = subsMatchesManuscript(text, segments.length)
+    ? subs
+    : segments.map(function (s) { return { text: s.lines.join('\n') }; });
+  var numbered = formatNumberedClips(source);
+  copyTextWithFallback(numbered).then(function (ok) {
+    if (ok) setHint(source.length + '行をコピーしました');
   });
 }
 
@@ -547,16 +555,15 @@ function subsMatchesManuscript(text, segmentCount) {
 
 // 入力画面(mainView)の右側クリップ一覧は、現在のsubsが現在の原稿テキストと
 // 一致している場合に限り英訳を表示する(一致しない場合は再構築されておらず
-// 対応が取れないため、表示しない)。同じ判定で「番号付きでコピー」「英訳を貼り付け」
-// ボタンの有効・無効も同期する: 不一致のまま操作を許すと、貼り付けた訳文が
-// 古いsubsのインデックスへ書き込まれ、画面に表示中のクリップには反映されない
-// (適用しても反映されないように見える不具合の実際の原因)。
+// 対応が取れないため、表示しない)。
+// 「番号付きでコピー」「英訳を貼り付け」ボタンの有効・無効はこれとは別判定にする
+// (原稿が空でない限り常に有効。subsが未生成/staleな場合の扱いはdoCopyNumbered/
+// openPasteModal側で分岐する。§1,2)。
 // src/app.jsからmanuscript.setTranslationsProviderへ配線される。
 function provideTranslationsForPreview(text, segmentCount) {
-  var matches = subsMatchesManuscript(text, segmentCount);
-  copyNumberedBtn.disabled = !matches;
-  pasteTranslationBtn.disabled = !matches;
-  if (!matches) return null;
+  copyNumberedBtn.disabled = segmentCount === 0;
+  pasteTranslationBtn.disabled = segmentCount === 0;
+  if (!subsMatchesManuscript(text, segmentCount)) return null;
   return subs.map(function (s) { return { translation: s.translation, translationStale: s.translationStale }; });
 }
 setTranslationsProvider(provideTranslationsForPreview);
@@ -570,7 +577,29 @@ function formatNumberList(nums) {
   return nums.length > 10 ? (shown + ' 他 ' + (nums.length - 10) + '件') : shown;
 }
 
+// 「英訳を貼り付け」(§2): subsの状態に応じてモーダルを開く前に分岐する。
+// a. subsが現在の原稿と一致 -> そのまま開く
+// b. subsが未生成(hasTimelineState===false) -> 確認なしでその場でsubsを生成
+// c. subsはあるが現原稿と不一致(stale) -> enterEditModeと同じ確認ダイアログ。
+//    キャンセルなら何もしない(モーダルを開かない)
+// b/cでsubsを生成した直後は、textEqualsが偽のままだとボタンが再度無効化され
+// 英訳プレビューも出ない罠になるため、原稿を正規化版へ書き戻してから開く(§3)。
 function openPasteModal() {
+  var text = textarea.value;
+  var segments = segmentManuscript(text);
+  if (segments.length === 0) return;
+
+  if (!subsMatchesManuscript(text, segments.length)) {
+    if (hasTimelineState) {
+      var ok = window.confirm('原稿が変更されています。タイムラインを再構築すると、手動調整した尺・訳文はリセットされます。よろしいですか？');
+      if (!ok) return;
+    }
+    if (!rebuildSubsFromManuscript(text, parseFloat(cpsInput.value))) return;
+    textarea.value = reconstructManuscript(subs); // 正規化書き戻し(§3)
+    render();
+    onChangeCallback();
+  }
+
   pasteTextarea.value = '';
   pasteResult.style.display = 'none';
   pasteResult.className = 'paste-result';
@@ -740,6 +769,21 @@ function showEditor() {
   onChangeCallback();
 }
 
+// 原稿からsubsを新規生成する(タイムライン生成/再構築の共通処理)。
+// 呼び出し側で「未生成」「原稿が変更された(要確認)」の判定・確認ダイアログを
+// 済ませてから呼ぶこと。生成できた場合はtrueを返す(原稿が空ならfalse)。
+function rebuildSubsFromManuscript(text, cps) {
+  var segments = segmentManuscript(text);
+  if (segments.length === 0) return false;
+
+  subs = subsFromSegments(segments, cps);
+  currentCps = (isFinite(cps) && cps > 0) ? cps : 12;
+  history = [];
+  headTimeMs = 0;
+  hasTimelineState = true;
+  return true;
+}
+
 function enterEditMode() {
   var text = textarea.value;
   var cps = parseFloat(cpsInput.value);
@@ -754,14 +798,7 @@ function enterEditMode() {
     if (!ok) return;
   }
 
-  var segments = segmentManuscript(text);
-  if (segments.length === 0) return;
-
-  subs = subsFromSegments(segments, cps);
-  currentCps = (isFinite(cps) && cps > 0) ? cps : 12;
-  history = [];
-  headTimeMs = 0;
-  hasTimelineState = true;
+  if (!rebuildSubsFromManuscript(text, cps)) return;
   showEditor();
 }
 

@@ -773,6 +773,72 @@ function makeSubs(dursMs) {
   assert(reparsed.entries.get(1) === 'مرحبا' && reparsed.entries.get(3) === 'شكرا', '#tr14 コピー直後の自分自身の出力を貼り戻しても正しくパースできる');
 })();
 
+// --- 修正: 「番号付きでコピー」「英訳を貼り付け」をタイムライン往復なしで使う ---
+// (docs/srtgen-translation-roundtrip-spec.md §4.2)
+
+// #copy1: subs未生成(タイムライン未生成)の状態でも、原稿をその場でsegmentManuscriptした
+// 結果からformatNumberedClips相当のコピー用テキストが正しく生成できる(doCopyNumberedの
+// フォールバック経路と同じ組み立て方: {lines,delim}[] -> {text: lines.join('\n')}[])
+(function () {
+  var text = 'مرحبا، كيف حالك؟ أنا بخير جدا';
+  var segments = segmentManuscript(text);
+  assert(segments.length === 3, '#copy1 前提: 3セグメントに分割される');
+
+  var source = segments.map(function (s) { return { text: s.lines.join('\n') }; });
+  var formatted = formatNumberedClips(source);
+  var lines = formatted.split('\n');
+  assert(lines.length === 3, '#copy1 subsが無くてもsegments由来で3行の番号付きテキストが生成される');
+
+  var reparsed = parseNumberedTranslation(formatted, 3);
+  assert(reparsed.entries.get(1) === 'مرحبا', '#copy1 #1がsegments[0]の本文と一致 -> "' + reparsed.entries.get(1) + '"');
+  assert(reparsed.entries.get(2) === 'كيف حالك؟', '#copy1 #2がsegments[1]の本文と一致 -> "' + reparsed.entries.get(2) + '"');
+  assert(reparsed.entries.get(3) === 'أنا بخير جدا', '#copy1 #3がsegments[2]の本文と一致 -> "' + reparsed.entries.get(3) + '"');
+})();
+
+// #copy2: subsFromSegments直後にreconstructManuscriptした結果を再度segmentManuscriptすると
+// 元と同じ分割になる(正規化書き戻し後、UI側のsubsMatchesManuscript相当の判定
+// [subs.length===segmentCount && textEquals(reconstructManuscript(subs), text)] がtrueになることの根拠)
+(function () {
+  var text = 'مرحبا، كيف حالك؟ أنا بخير جدا اليوم شكرا لك';
+  var segments = segmentManuscript(text);
+  var subs = subsFromSegments(segments, 12);
+
+  var normalized = reconstructManuscript(subs); // openPasteModal/enterEditModeが書き戻す内容と同じ
+  var reparsedSegments = segmentManuscript(normalized);
+  var reparsedSubs = subsFromSegments(reparsedSegments, 12);
+
+  assert(reparsedSubs.length === subs.length, '#copy2 正規化書き戻し後の再分割でもクリップ数が一致する');
+  assert(textEquals(reconstructManuscript(subs), normalized) === true,
+    '#copy2 書き戻し直後のtextareaと reconstructManuscript(subs) は完全一致する(subsMatchesManuscriptがtrueになる)');
+  assert(subs.length === reparsedSegments.length,
+    '#copy2 subs.length === segmentManuscript(normalized).length も成立する(件数一致条件)');
+})();
+
+// #copy3: stale状態(subsはあるが現原稿と不一致)からの再構築で、
+// 新しいsubsのtranslation/translationStaleが初期状態にリセットされる
+// (openPasteModalのc経路: 確認ダイアログ後にrebuildSubsFromManuscript相当の処理を行う想定)
+(function () {
+  var oldText = 'مرحبا، كيف حالك؟';
+  var oldSegments = segmentManuscript(oldText);
+  var staleSubs = subsFromSegments(oldSegments, 12).map(function (s, i) {
+    return Object.assign({}, s, { translation: 'old translation ' + i, translationStale: false });
+  });
+  assert(staleSubs[0].translation === 'old translation 0', '#copy3 前提: 古いsubsには訳文が入っている');
+
+  // 原稿が編集され、staleSubsとは一致しない新しい原稿になった
+  var newText = 'مرحبا، كيف حالك؟ أنا بخير جدا اليوم';
+  assert(textEquals(reconstructManuscript(staleSubs), newText) === false, '#copy3 前提: 古いsubsは新しい原稿と不一致(stale)');
+
+  // 再構築(rebuildSubsFromManuscript相当): 新しい原稿から作り直す
+  var newSegments = segmentManuscript(newText);
+  var rebuiltSubs = subsFromSegments(newSegments, 12);
+
+  rebuiltSubs.forEach(function (s, i) {
+    assert(s.translation === '', '#copy3 再構築後のクリップ' + i + 'はtranslationが空文字にリセットされる');
+    assert(s.translationStale === false, '#copy3 再構築後のクリップ' + i + 'はtranslationStaleがfalseにリセットされる');
+  });
+})();
+
 // --- localStorage: 保存・復元・破損時フォールバック(スキーマv5、§2) ---
 (function () {
   var validState = {
