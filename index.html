@@ -150,17 +150,14 @@
   <div class="modal-box">
     <h2>英訳を貼り付け</h2>
     <textarea id="pasteTextarea" dir="ltr" rows="10" placeholder="番号付きの英訳をここに貼り付けてください..."></textarea>
-    <div class="paste-mode-row">
-      <label><input type="radio" name="pasteApplyMode" value="fillEmpty" checked> 空欄のみ埋める</label>
-      <label><input type="radio" name="pasteApplyMode" value="overwriteAll"> すべて上書き</label>
-    </div>
+    <p class="modal-note">貼り付けた内容が常に正となり、含まれる番号のクリップは無条件に上書きされます（含まれない番号は現状維持）。「照合」は結果を事前確認するための任意機能です。</p>
     <div class="modal-actions">
       <button id="pasteCheckBtn" type="button" class="editor-btn">照合</button>
     </div>
     <div id="pasteResult" class="paste-result" style="display:none;"></div>
     <div class="modal-footer">
       <button id="pasteCancelBtn" type="button" class="secondary-btn">キャンセル</button>
-      <button id="pasteApplyBtn" type="button" class="editor-btn primary-btn" disabled>適用</button>
+      <button id="pasteApplyBtn" type="button" class="editor-btn primary-btn">適用</button>
     </div>
   </div>
 </div>

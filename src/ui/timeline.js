@@ -552,9 +552,11 @@ function provideTranslationsForPreview(text, segmentCount) {
 }
 setTranslationsProvider(provideTranslationsForPreview);
 
-// 英訳貼り付けモーダル(§4-6)。直近の「照合」結果をpasteParsedに保持し、
-// テキストが変更されたら再照合を必須にする(適用ボタンを無効化)。
-var pasteParsed = null;
+// 英訳貼り付けモーダル(§4-6)。
+// 修正1: 「適用」は押下時点のtextareaの内容を都度再パースする(照合結果をキャッシュして
+// 使い回さない)。これにより2回目以降の貼り付けでも常に最新の内容が反映される。
+// 「空欄のみ埋める/すべて上書き」の2モードは廃止し、貼り付けに含まれる番号は常に上書き、
+// 含まれない番号は現状維持する。
 
 function formatNumberList(nums) {
   var shown = nums.slice(0, 10).map(function (n) { return '#' + n; }).join(' / ');
@@ -565,8 +567,6 @@ function openPasteModal() {
   pasteTextarea.value = '';
   pasteResult.style.display = 'none';
   pasteResult.className = 'paste-result';
-  pasteApplyBtn.disabled = true;
-  pasteParsed = null;
   modalOpen = true;
   pasteModal.style.display = 'flex';
   pasteTextarea.focus();
@@ -577,9 +577,9 @@ function closePasteModal() {
   modalOpen = false;
 }
 
-function doPasteCheck() {
-  var parsed = parseNumberedTranslation(pasteTextarea.value, subs.length);
-  pasteParsed = parsed;
+// 貼り付けテキストをパースし、照合結果の表示用データを組み立てる(照合ボタン・適用ボタンの両方から呼ぶ)。
+function evaluatePasteText(text) {
+  var parsed = parseNumberedTranslation(text, subs.length);
   var issues = parsed.issues;
   var validCount = 0;
   parsed.entries.forEach(function (_, num) {
@@ -596,27 +596,39 @@ function doPasteCheck() {
   if (subIssues.length > 0) lines.push(subIssues.join(' / '));
   if (issues.preamble) lines.push('訳文以外のテキストが含まれています');
 
-  pasteResult.textContent = lines.join('\n');
-  pasteResult.style.display = '';
+  return { parsed: parsed, validCount: validCount, hasIssues: subIssues.length > 0, resultText: lines.join('\n') };
+}
 
-  if (validCount === 0) {
+function showPasteResult(evalResult) {
+  pasteResult.textContent = evalResult.resultText;
+  pasteResult.style.display = '';
+  if (evalResult.validCount === 0) {
     pasteResult.className = 'paste-result danger';
-    pasteApplyBtn.disabled = true;
-  } else if (subIssues.length > 0) {
+  } else if (evalResult.hasIssues) {
     pasteResult.className = 'paste-result warning';
-    pasteApplyBtn.disabled = false;
   } else {
     pasteResult.className = 'paste-result success';
-    pasteApplyBtn.disabled = false;
   }
 }
 
+// 「照合」は任意のプレビュー機能。結果はここでのみ表示し、適用時には使い回さない。
+function doPasteCheck() {
+  showPasteResult(evaluatePasteText(pasteTextarea.value));
+}
+
+// 「適用」: 押下時点のtextareaの内容を再パースしてから適用する(照合結果のキャッシュは使わない)。
+// 貼り付けに含まれる番号のクリップは無条件に上書きし、含まれない番号のクリップは現状維持する。
 function doPasteApply() {
-  if (!pasteParsed || pasteApplyBtn.disabled) return;
-  var overwriteAll = document.querySelector('input[name="pasteApplyMode"]:checked').value === 'overwriteAll';
-  var entries = pasteParsed.entries;
+  var evalResult = evaluatePasteText(pasteTextarea.value);
+  showPasteResult(evalResult);
+  if (evalResult.validCount === 0) {
+    setHint('適用できる訳文がありませんでした');
+    return;
+  }
+
+  var entries = evalResult.parsed.entries;
   var outOfRangeSet = {};
-  pasteParsed.issues.outOfRange.forEach(function (n) { outOfRangeSet[n] = true; });
+  evalResult.parsed.issues.outOfRange.forEach(function (n) { outOfRangeSet[n] = true; });
 
   history = pushHistory(history, subs);
   var next = cloneSubs(subs);
@@ -624,7 +636,6 @@ function doPasteApply() {
   for (var i = 0; i < next.length; i++) {
     var num = i + 1;
     if (outOfRangeSet[num] || !entries.has(num)) continue;
-    if (!overwriteAll && next[i].translation !== '') continue;
     next[i].translation = entries.get(num);
     next[i].translationStale = false;
     appliedCount++;
@@ -632,13 +643,13 @@ function doPasteApply() {
   if (appliedCount === 0) {
     history = history.slice(0, -1);
     setHint('適用できる訳文がありませんでした');
-  } else {
-    subs = next;
-    setHint(appliedCount + '件の訳文を適用しました');
-    if (mode === 'edit') renderTimeline(); else render();
-    onChangeCallback();
-    onTranslationAppliedCallback();
+    return;
   }
+  subs = next;
+  setHint(appliedCount + '件の訳文を適用しました');
+  if (mode === 'edit') renderTimeline(); else render();
+  onChangeCallback();
+  onTranslationAppliedCallback();
   closePasteModal();
 }
 
@@ -822,9 +833,7 @@ pasteCheckBtn.addEventListener('click', doPasteCheck);
 pasteApplyBtn.addEventListener('click', doPasteApply);
 pasteCancelBtn.addEventListener('click', closePasteModal);
 pasteTextarea.addEventListener('input', function () {
-  pasteApplyBtn.disabled = true;
   pasteResult.style.display = 'none';
-  pasteParsed = null;
 });
 downloadEditorBtn.addEventListener('click', downloadFromSubs);
 
