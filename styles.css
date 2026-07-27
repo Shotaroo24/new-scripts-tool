@@ -610,12 +610,44 @@ button.secondary-btn:disabled {
   justify-content: flex-end;
   gap: 8px;
 }
-.paste-mode-row {
-  display: flex;
-  gap: 16px;
-  font-size: 13px;
+/* ダイアログフッター共通ボタン(修正2): 保存/キャンセル・適用/キャンセル等の高さを統一する。
+   色分けはdialog-btn-primary/dialog-btn-secondaryで行い、サイズはここでのみ定義する。 */
+.dialog-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 18px;
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 600;
+  border-radius: 8px;
+  white-space: nowrap;
+  width: auto;
+  margin-top: 0;
+  cursor: pointer;
+}
+.dialog-btn.dialog-btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border: 1px solid var(--accent);
+}
+.dialog-btn.dialog-btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+.dialog-btn.dialog-btn-secondary {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+.dialog-btn.dialog-btn-secondary:hover:not(:disabled) {
+  background: #eef3ff;
+}
+.dialog-btn:disabled {
   color: var(--text-dim);
-  margin: 0 0 12px;
+  border-color: var(--panel-border);
+  background: transparent;
+  cursor: not-allowed;
 }
 .paste-result {
   font-size: 13px;
