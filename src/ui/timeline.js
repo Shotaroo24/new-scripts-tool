@@ -60,7 +60,6 @@ var previewHint = document.getElementById('previewHint');
 
 var pasteModal = document.getElementById('pasteModal');
 var pasteTextarea = document.getElementById('pasteTextarea');
-var pasteCheckBtn = document.getElementById('pasteCheckBtn');
 var pasteApplyBtn = document.getElementById('pasteApplyBtn');
 var pasteCancelBtn = document.getElementById('pasteCancelBtn');
 var pasteResult = document.getElementById('pasteResult');
@@ -562,10 +561,8 @@ function provideTranslationsForPreview(text, segmentCount) {
 }
 setTranslationsProvider(provideTranslationsForPreview);
 
-// 英訳貼り付けモーダル(§4-6)。
-// 修正1: 「適用」は押下時点のtextareaの内容を都度再パースする(照合結果をキャッシュして
-// 使い回さない)。これにより2回目以降の貼り付けでも常に最新の内容が反映される。
-// 「空欄のみ埋める/すべて上書き」の2モードは廃止し、貼り付けに含まれる番号は常に上書き、
+// 英訳貼り付けモーダル(§4-6)。「照合」ボタンは廃止し、検証は「適用」の中で行う。
+// 「空欄のみ埋める/すべて上書き」の2モードも廃止済み: 貼り付けに含まれる番号は常に上書き、
 // 含まれない番号は現状維持する。
 
 function formatNumberList(nums) {
@@ -587,58 +584,36 @@ function closePasteModal() {
   modalOpen = false;
 }
 
-// 貼り付けテキストをパースし、照合結果の表示用データを組み立てる(照合ボタン・適用ボタンの両方から呼ぶ)。
-function evaluatePasteText(text) {
-  var parsed = parseNumberedTranslation(text, subs.length);
-  var issues = parsed.issues;
-  var validCount = 0;
-  parsed.entries.forEach(function (_, num) {
-    if (issues.outOfRange.indexOf(num) === -1) validCount++;
-  });
-
-  var matchedCount = subs.length - issues.missing.length;
-  var lines = [subs.length + '件中 ' + matchedCount + '件を照合しました'];
+// 適用結果メッセージ(欠落・重複等は番号を名指しする。指示書: 「26件を適用しました。
+// #12が欠落、#19が重複しています」)。
+function buildApplyResultMessage(appliedCount, issues) {
   var subIssues = [];
-  if (issues.missing.length > 0) subIssues.push(formatNumberList(issues.missing) + ' が欠落');
-  if (issues.duplicate.length > 0) subIssues.push(formatNumberList(issues.duplicate) + ' が重複');
-  if (issues.outOfRange.length > 0) subIssues.push(formatNumberList(issues.outOfRange) + ' が範囲外');
-  if (issues.emptyBody.length > 0) subIssues.push(formatNumberList(issues.emptyBody) + ' が空本文');
-  if (subIssues.length > 0) lines.push(subIssues.join(' / '));
-  if (issues.preamble) lines.push('訳文以外のテキストが含まれています');
+  if (issues.missing.length > 0) subIssues.push(formatNumberList(issues.missing) + 'が欠落');
+  if (issues.duplicate.length > 0) subIssues.push(formatNumberList(issues.duplicate) + 'が重複');
+  if (issues.outOfRange.length > 0) subIssues.push(formatNumberList(issues.outOfRange) + 'が範囲外');
+  if (issues.emptyBody.length > 0) subIssues.push(formatNumberList(issues.emptyBody) + 'が空本文');
+  if (issues.preamble) subIssues.push('訳文以外のテキストが含まれています');
 
-  return { parsed: parsed, validCount: validCount, hasIssues: subIssues.length > 0, resultText: lines.join('\n') };
-}
-
-function showPasteResult(evalResult) {
-  pasteResult.textContent = evalResult.resultText;
-  pasteResult.style.display = '';
-  if (evalResult.validCount === 0) {
-    pasteResult.className = 'paste-result danger';
-  } else if (evalResult.hasIssues) {
-    pasteResult.className = 'paste-result warning';
-  } else {
-    pasteResult.className = 'paste-result success';
+  if (appliedCount === 0) {
+    return '適用できる訳文がありませんでした' + (subIssues.length > 0 ? '（' + subIssues.join('、') + '）' : '') + '。';
   }
+  if (subIssues.length === 0) {
+    return appliedCount + '件の訳文を適用しました。';
+  }
+  return appliedCount + '件を適用しました。' + subIssues.join('、') + 'しています。';
 }
 
-// 「照合」は任意のプレビュー機能。結果はここでのみ表示し、適用時には使い回さない。
-function doPasteCheck() {
-  showPasteResult(evaluatePasteText(pasteTextarea.value));
-}
-
-// 「適用」: 押下時点のtextareaの内容を再パースしてから適用する(照合結果のキャッシュは使わない)。
-// 貼り付けに含まれる番号のクリップは無条件に上書きし、含まれない番号のクリップは現状維持する。
+// 「適用」: 押下時点のtextareaの内容を再パースしてから適用する(プレビュー結果の
+// キャッシュは使わない)。以下の順序で必ず実行する:
+// 1. 再パース 2. クリップのtranslation/translationStaleを更新 3. 永続化
+// 4. クリップ一覧・タイムラインを正本のstateから全再描画 5. モーダルを閉じる
+// (欠落・重複・空本文があっても、正常にパースできた番号は適用し、全体を中断しない)
 function doPasteApply() {
-  var evalResult = evaluatePasteText(pasteTextarea.value);
-  showPasteResult(evalResult);
-  if (evalResult.validCount === 0) {
-    setHint('適用できる訳文がありませんでした');
-    return;
-  }
-
-  var entries = evalResult.parsed.entries;
+  var parsed = parseNumberedTranslation(pasteTextarea.value, subs.length);
+  var issues = parsed.issues;
+  var entries = parsed.entries;
   var outOfRangeSet = {};
-  evalResult.parsed.issues.outOfRange.forEach(function (n) { outOfRangeSet[n] = true; });
+  issues.outOfRange.forEach(function (n) { outOfRangeSet[n] = true; });
 
   history = pushHistory(history, subs);
   var next = cloneSubs(subs);
@@ -650,17 +625,24 @@ function doPasteApply() {
     next[i].translationStale = false;
     appliedCount++;
   }
+
+  var message = buildApplyResultMessage(appliedCount, issues);
+
   if (appliedCount === 0) {
     history = history.slice(0, -1);
-    setHint('適用できる訳文がありませんでした');
-    return;
+    pasteResult.textContent = message;
+    pasteResult.className = 'paste-result danger';
+    pasteResult.style.display = '';
+    setHint(message);
+    return; // 何も適用できなかった場合はモーダルを開いたまま、textareaを修正できるようにする
   }
-  subs = next;
-  setHint(appliedCount + '件の訳文を適用しました');
-  if (mode === 'edit') renderTimeline(); else render();
-  onChangeCallback();
+
+  subs = next; // 2. クリップへ反映(正本のstateを更新)
+  onChangeCallback(); // 3. 永続化(既存の状態変更保存経路。300msデバウンス)
+  if (mode === 'edit') renderTimeline(); else render(); // 4. 正本のstateから全再描画
   onTranslationAppliedCallback();
-  closePasteModal();
+  setHint(message);
+  closePasteModal(); // 5. モーダルを閉じる
 }
 
 // Delete: 選択中の字幕クリップを削除する。
@@ -839,7 +821,6 @@ mBtn.addEventListener('click', doMerge);
 undoBtn.addEventListener('click', doUndo);
 copyNumberedBtn.addEventListener('click', doCopyNumbered);
 pasteTranslationBtn.addEventListener('click', openPasteModal);
-pasteCheckBtn.addEventListener('click', doPasteCheck);
 pasteApplyBtn.addEventListener('click', doPasteApply);
 pasteCancelBtn.addEventListener('click', closePasteModal);
 pasteTextarea.addEventListener('input', function () {
