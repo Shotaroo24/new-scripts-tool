@@ -69,6 +69,12 @@ export function render() {
   var segments = segmentManuscript(text);
   currentCues = buildCues(segments, cps);
 
+  // segments.length===0(原稿が空)の場合も含め、キーストロークのたびに必ず呼ぶ。
+  // provideTranslationsForPreview側でsubsと現在の原稿の一致判定を行い、番号付き
+  // コピー/貼り付けボタンの有効・無効もここで同期する(subsが古い原稿のまま残って
+  // いる状態でボタンだけ有効なままだと、書き込み先と表示中のクリップが食い違う)。
+  var translations = translationsProvider ? translationsProvider(text, segments.length) : null;
+
   previewList.innerHTML = '';
   if (segments.length === 0) {
     emptyState.style.display = '';
@@ -76,7 +82,6 @@ export function render() {
   } else {
     emptyState.style.display = 'none';
     previewList.style.display = '';
-    var translations = translationsProvider ? translationsProvider(text, segments.length) : null;
     var frag = document.createDocumentFragment();
     for (var i = 0; i < segments.length; i++) {
       frag.appendChild(buildPreviewRow(i, segments[i].lines.join('\n'), translations ? translations[i] : null));

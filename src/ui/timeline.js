@@ -395,8 +395,6 @@ function renderTimeline() {
 
 function updateDownloadEditorState() {
   downloadEditorBtn.disabled = subs.length === 0;
-  copyNumberedBtn.disabled = subs.length === 0;
-  pasteTranslationBtn.disabled = subs.length === 0;
 }
 
 function autoScrollToPlayhead() {
@@ -540,14 +538,26 @@ function doCopyNumbered() {
   });
 }
 
+// 現在のsubsが、現在の原稿テキスト(text)・現在のセグメント分割(segmentCount)と
+// 一致しているか。原稿を編集した後にタイムラインを再構築せずにいると、subsは
+// 古い分割のまま残る(番号や件数が現在の画面表示とズレる)。
+function subsMatchesManuscript(text, segmentCount) {
+  return hasTimelineState && subs.length > 0 &&
+    subs.length === segmentCount && textEquals(reconstructManuscript(subs), text);
+}
+
 // 入力画面(mainView)の右側クリップ一覧は、現在のsubsが現在の原稿テキストと
 // 一致している場合に限り英訳を表示する(一致しない場合は再構築されておらず
-// 対応が取れないため、表示しない)。src/app.jsからmanuscript.setTranslationsProviderへ
-// 配線される。
+// 対応が取れないため、表示しない)。同じ判定で「番号付きでコピー」「英訳を貼り付け」
+// ボタンの有効・無効も同期する: 不一致のまま操作を許すと、貼り付けた訳文が
+// 古いsubsのインデックスへ書き込まれ、画面に表示中のクリップには反映されない
+// (適用しても反映されないように見える不具合の実際の原因)。
+// src/app.jsからmanuscript.setTranslationsProviderへ配線される。
 function provideTranslationsForPreview(text, segmentCount) {
-  if (!hasTimelineState) return null;
-  if (subs.length !== segmentCount) return null;
-  if (!textEquals(reconstructManuscript(subs), text)) return null;
+  var matches = subsMatchesManuscript(text, segmentCount);
+  copyNumberedBtn.disabled = !matches;
+  pasteTranslationBtn.disabled = !matches;
+  if (!matches) return null;
   return subs.map(function (s) { return { translation: s.translation, translationStale: s.translationStale }; });
 }
 setTranslationsProvider(provideTranslationsForPreview);
