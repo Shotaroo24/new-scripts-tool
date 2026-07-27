@@ -3,11 +3,12 @@
 import { pad, formatTotalDuration } from '../core/time.js';
 import { segmentManuscript, buildCues } from '../core/segment.js';
 import { charCountForText } from '../core/subs.js';
-import { buildSrt } from '../core/srt.js';
+import { buildSrt, snapCuesToFrameGrid, applyOverlap } from '../core/srt.js';
 
 export var textarea = document.getElementById('manuscript');
 export var cpsInput = document.getElementById('cps');
 export var bomCheckbox = document.getElementById('bom');
+export var overlapCheckbox = document.getElementById('overlapPlusOneFrame');
 export var downloadBtn = document.getElementById('downloadBtn');
 export var toTimelineBtn = document.getElementById('toTimelineBtn');
 var previewList = document.getElementById('previewList');
@@ -116,9 +117,17 @@ export function downloadSrtContent(content) {
   setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
 }
 
+// 出力直前にフレームグリッドへスナップし(常時)、任意でオーバーラップ+1fを適用する。
+// 入力モード・編集モード共通(timeline.jsのdownloadFromSubsからも呼ばれる)。
+export function buildSrtForDownload(cues) {
+  var snapped = snapCuesToFrameGrid(cues);
+  if (overlapCheckbox.checked) snapped = applyOverlap(snapped);
+  return buildSrt(snapped, bomCheckbox.checked);
+}
+
 function download() {
   if (currentCues.length === 0) return;
-  downloadSrtContent(buildSrt(currentCues, bomCheckbox.checked));
+  downloadSrtContent(buildSrtForDownload(currentCues));
 }
 
 textarea.addEventListener('input', function () {

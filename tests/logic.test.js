@@ -4,7 +4,7 @@
 
 import { segmentManuscript, buildCues } from '../src/core/segment.js';
 import { formatSrtTime, formatTotalDuration, formatClock, MIN_DUR_MS, computeStartsMs, totalDurationMs, clipAt, ZOOM_LEVELS, msToPx, pxToMs, pickTickIntervalSec, clampZoomIndex } from '../src/core/time.js';
-import { buildSrt } from '../src/core/srt.js';
+import { buildSrt, snapCuesToFrameGrid, applyOverlap, FRAME_FPS } from '../src/core/srt.js';
 import {
   subsFromSegments, setClipDuration, trimClipAtHead, extendClipToHead, mergeClipAt, deleteClipAt,
   recalcUneditedDurations, subsToCues, reconstructManuscript,
@@ -1011,6 +1011,74 @@ function makeSubs(dursMs) {
     }) === true,
     '#local2 クリップ0件でも有効なセッションとして扱われる'
   );
+})();
+
+// --- SRT出力のフレームスナップ(30fps)・オーバーラップ+1fフォールバック ---
+
+// #snap1: スナップ後、全隣接キューでend_ms === next.start_ms が成立する
+(function () {
+  var subs = makeSubs([137, 241, 89, 733, 412, 1006, 58]);
+  var cues = subsToCues(subs);
+  var snapped = snapCuesToFrameGrid(cues);
+
+  var ok = true;
+  for (var i = 1; i < snapped.length; i++) {
+    if (snapped[i - 1].endMs !== snapped[i].startMs) { ok = false; break; }
+  }
+  assert(ok, '#snap1 スナップ後は全隣接キューでend_ms === next.start_ms が成立する -> ' + JSON.stringify(snapped.map(function (c) { return [c.startMs, c.endMs]; })));
+})();
+
+// #snap2: スナップ後の全時刻がround(ms*30/1000)*1000/30と1ms未満の誤差で一致する(フレームグリッド上にある)
+(function () {
+  var subs = makeSubs([137, 241, 89, 733, 412, 1006, 58]);
+  var cues = subsToCues(subs);
+  var snapped = snapCuesToFrameGrid(cues);
+
+  var times = [];
+  snapped.forEach(function (c) { times.push(c.startMs, c.endMs); });
+  times.forEach(function (ms) {
+    var onGrid = Math.round((ms / 1000) * FRAME_FPS) * 1000 / FRAME_FPS;
+    assert(Math.abs(ms - onGrid) < 1, '#snap2 ' + ms + 'msはフレームグリッド上にある(理論値=' + onGrid + ')');
+  });
+})();
+
+// #snap3: 極端に短いクリップが連続するエッジケースでも、単調性と最低1フレーム長が保たれる
+// (元の境界を素直にround(ms*30/1000)すると同一フレームに潰れて長さ0以下のキューが生じうる区間)
+(function () {
+  var subs = makeSubs([10, 10, 10, 10, 10]);
+  var cues = subsToCues(subs);
+  var snapped = snapCuesToFrameGrid(cues);
+
+  var minFrameMs = Math.floor(1000 / FRAME_FPS); // 33ms(30fpsの1フレームは33msか34ms)
+  var ok = true;
+  for (var i = 0; i < snapped.length; i++) {
+    if (snapped[i].endMs <= snapped[i].startMs || (snapped[i].endMs - snapped[i].startMs) < minFrameMs) { ok = false; break; }
+  }
+  assert(ok, '#snap3 極端に短いクリップ連続でも各キューが最低1フレーム長を保つ -> ' + JSON.stringify(snapped.map(function (c) { return [c.startMs, c.endMs]; })));
+
+  var monotonic = true;
+  for (var j = 1; j < snapped.length; j++) {
+    if (snapped[j].startMs <= snapped[j - 1].startMs) { monotonic = false; break; }
+  }
+  assert(monotonic, '#snap3 境界が単調増加を保つ(削除・結合はせず後続を押し出す) -> ' + JSON.stringify(snapped.map(function (c) { return c.startMs; })));
+  assert(snapped.length === subs.length, '#snap3 キューの件数は変わらない(削除・結合はしない)');
+})();
+
+// #snap4: オーバーラップONの出力でend_ms === next.start_ms + 33 になる(最終キューは対象外)
+(function () {
+  var subs = makeSubs([1000, 2000, 1500]);
+  var cues = subsToCues(subs);
+  var snapped = snapCuesToFrameGrid(cues);
+  var overlapped = applyOverlap(snapped);
+
+  for (var i = 0; i < overlapped.length - 1; i++) {
+    assert(
+      overlapped[i].endMs === overlapped[i + 1].startMs + 33,
+      '#snap4 最終キュー以外はend_msがnext.start_ms + 33になる -> cue' + i + ' end=' + overlapped[i].endMs + ', next.start=' + overlapped[i + 1].startMs
+    );
+  }
+  var last = overlapped.length - 1;
+  assert(overlapped[last].endMs === snapped[last].endMs, '#snap4 最終キューのend_msはオーバーラップの対象外(変更されない)');
 })();
 
 console.log('');

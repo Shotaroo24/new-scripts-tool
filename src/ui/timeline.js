@@ -10,7 +10,6 @@ import {
   recalcUneditedDurations, subsToCues, reconstructManuscript, textEquals,
   pushHistory, popHistory
 } from '../core/subs.js';
-import { buildSrt } from '../core/srt.js';
 import { formatNumberedClips, parseNumberedTranslation } from '../core/translation.js';
 import { copyTextWithFallback } from './clipboard.js';
 import {
@@ -20,7 +19,8 @@ import {
   previewBaselineOffsetPx, previewSafeMargins, judgeLineCount, autoSplitToTwoLines, collapseToOneLine
 } from '../core/style.js';
 import {
-  textarea, cpsInput, bomCheckbox, toTimelineBtn, render, downloadSrtContent, setTranslationsProvider
+  textarea, cpsInput, toTimelineBtn, render, downloadSrtContent, setTranslationsProvider,
+  buildSrtForDownload
 } from './manuscript.js';
 
 var mainView = document.getElementById('mainView');
@@ -832,7 +832,7 @@ function exitEditMode() {
 
 function downloadFromSubs() {
   if (subs.length === 0) return;
-  downloadSrtContent(buildSrt(subsToCues(subs), bomCheckbox.checked));
+  downloadSrtContent(buildSrtForDownload(subsToCues(subs)));
 }
 
 function setZoom(newIndex) {
