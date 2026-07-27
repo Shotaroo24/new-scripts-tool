@@ -6,7 +6,7 @@ import { segmentManuscript, buildCues } from '../src/core/segment.js';
 import { formatSrtTime, formatTotalDuration, formatClock, MIN_DUR_MS, computeStartsMs, totalDurationMs, clipAt, ZOOM_LEVELS, msToPx, pxToMs, pickTickIntervalSec, clampZoomIndex } from '../src/core/time.js';
 import { buildSrt } from '../src/core/srt.js';
 import {
-  subsFromSegments, setClipDuration, trimClipAtHead, mergeClipAt, deleteClipAt,
+  subsFromSegments, setClipDuration, trimClipAtHead, extendClipToHead, mergeClipAt, deleteClipAt,
   recalcUneditedDurations, subsToCues, reconstructManuscript,
   textEquals, pushHistory, popHistory, charCountForText
 } from '../src/core/subs.js';
@@ -189,6 +189,44 @@ function makeSubs(dursMs) {
   var result = trimClipAtHead(subs, 1, 1100); // 1100-1000=100ms < 300ms
   assert(result.ok === false, '#T3 300ms未満のトリムは拒否される');
   assert(result.subs === subs, '#T3 拒否時は元の配列そのままが返る(状態不変)');
+})();
+
+// E: 選択中のクリップの終端を再生ヘッドまで伸ばす(トリムのヘッド追従版・伸ばす方向のみ)
+// #E1: 開始1000ms・尺2000ms(終端3000ms)のクリップをヘッド4200msまで伸ばす -> 尺3200ms、リップルで後続の開始が後ろへずれる
+(function () {
+  var subs = makeSubs([1000, 2000, 1500]); // index1: 開始1000ms, 終端3000ms
+  var result = extendClipToHead(subs, 1, 4200);
+  assert(result.ok, '#E1 伸ばす操作が成功する');
+  assert(result.subs[1].durMs === 3200, '#E1 尺が3200msになる -> ' + result.subs[1].durMs);
+  assert(result.subs[1].edited === true, '#E1 伸ばした後のクリップはedited:trueになる');
+  var starts = computeStartsMs(result.subs);
+  assert(starts[2] === 4200, '#E1 リップルで後続クリップの開始がヘッド位置(4200ms)まで後ろにずれる -> ' + starts[2]);
+  assert(result.subs[1].text === subs[1].text, '#E1 テキストは変更されない');
+})();
+
+// #E2: ヘッドが選択クリップの終端と同じ(3000ms)場合は伸ばせない(拒否・状態不変)
+(function () {
+  var subs = makeSubs([1000, 2000, 1500]); // index1の終端は3000ms
+  var result = extendClipToHead(subs, 1, 3000);
+  assert(result.ok === false, '#E2 ヘッドが終端と同じ場合は拒否される(伸びない)');
+  assert(result.subs === subs, '#E2 拒否時は元の配列そのままが返る(状態不変)');
+})();
+
+// #E3: ヘッドが選択クリップの終端より前(2400ms < 3000ms)の場合も伸ばせない(縮める方向には使えない)
+(function () {
+  var subs = makeSubs([1000, 2000, 1500]);
+  var result = extendClipToHead(subs, 1, 2400);
+  assert(result.ok === false, '#E3 ヘッドが終端より前の場合は拒否される(トリムとは違い縮められない)');
+  assert(result.subs === subs, '#E3 拒否時は元の配列そのままが返る(状態不変)');
+})();
+
+// #E4: 最終クリップも伸ばせる(次のクリップが無いため単純に総尺が伸びるだけ)
+(function () {
+  var subs = makeSubs([1000, 2000, 1500]); // index2: 開始3000ms, 終端4500ms
+  var result = extendClipToHead(subs, 2, 5000);
+  assert(result.ok, '#E4 最終クリップも伸ばせる');
+  assert(result.subs[2].durMs === 2000, '#E4 尺が2000msになる -> ' + result.subs[2].durMs);
+  assert(totalDurationMs(result.subs) === 5000, '#E4 総尺がヘッド位置(5000ms)になる');
 })();
 
 // 4: 結合。テキスト・訳文がスペース連結、尺が合算、配列長が1減る。delimは右側を引き継ぐ

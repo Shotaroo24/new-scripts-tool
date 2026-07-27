@@ -6,7 +6,7 @@ import {
 } from '../core/time.js';
 import { segmentManuscript } from '../core/segment.js';
 import {
-  subsFromSegments, cloneSubs, setClipDuration, trimClipAtHead, mergeClipAt, deleteClipAt,
+  subsFromSegments, cloneSubs, setClipDuration, trimClipAtHead, extendClipToHead, mergeClipAt, deleteClipAt,
   recalcUneditedDurations, subsToCues, reconstructManuscript, textEquals,
   pushHistory, popHistory
 } from '../core/subs.js';
@@ -510,6 +510,24 @@ function doTrim() {
   onChangeCallback();
 }
 
+// E: 選択中のクリップ(ヘッドが乗っているクリップとは限らない)の終端を
+// 再生ヘッドまで伸ばす。ヘッドが選択クリップの終端以前にある場合は拒否する。
+function doExtendToHead() {
+  var idx = selectedClipIndex;
+  if (idx === -1 || idx >= subs.length) return;
+  history = pushHistory(history, subs);
+  var result = extendClipToHead(subs, idx, headTimeMs);
+  if (!result.ok) {
+    history = history.slice(0, -1);
+    setHint('ヘッドが選択クリップの終端より前です（伸ばせません）');
+    return;
+  }
+  subs = result.subs;
+  setHint('クリップの終端をヘッドまで伸ばしました');
+  renderTimeline();
+  onChangeCallback();
+}
+
 function doMerge() {
   var idx = currentClipIndex();
   if (idx === -1) return;
@@ -957,6 +975,8 @@ document.addEventListener('keydown', function (e) {
     seekTo(headTimeMs + 100);
   } else if (e.key === 's' || e.key === 'S') {
     doTrim();
+  } else if (e.key === 'e' || e.key === 'E') {
+    doExtendToHead();
   } else if (e.key === 'm' || e.key === 'M') {
     doMerge();
   } else if (e.key === 'l' || e.key === 'L') {

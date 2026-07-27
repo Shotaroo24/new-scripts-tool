@@ -73,6 +73,21 @@ export function trimClipAtHead(subs, index, headMs) {
   return { ok: true, subs: next };
 }
 
+// E: 選択中のクリップの終端を再生ヘッドまで伸ばす(ヘッドms − クリップ開始ms を新しい尺にする)。
+// 伸ばす操作のため、結果が現在の尺以下(ヘッドが終端以前、またはちょうど終端)なら拒否する。
+// リップルにより後続クリップの開始時刻は自動的に後ろへずれる。テキストは変更しない。
+export function extendClipToHead(subs, index, headMs) {
+  var starts = computeStartsMs(subs);
+  var newDur = Math.round(headMs) - starts[index];
+  if (newDur <= subs[index].durMs) {
+    return { ok: false, subs: subs };
+  }
+  var next = cloneSubs(subs);
+  next[index].durMs = newDur;
+  next[index].edited = true;
+  return { ok: true, subs: next };
+}
+
 // M: index番目と右隣(index+1)を結合する。テキストは半角スペース連結、尺は合算。
 // delimは左クリップのものを破棄し、右クリップのものを引き継ぐ。
 // 最終クリップ(右隣が存在しない)なら拒否。
