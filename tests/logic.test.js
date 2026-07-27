@@ -521,6 +521,74 @@ function makeSubs(dursMs) {
   assert(srt.indexOf('السطر الأول\nالسطر الثاني') !== -1, '#6 SRT内で改行を保持した複数行キューとして出力される -> ' + srt);
 })();
 
+// --- 修正3: 2行分割のSRT反映の検証(修正依頼 §3) ---
+
+// テスト1: 2行クリップ -> SRT文字列に改行が含まれる
+(function () {
+  var subs = [
+    { text: 'السطر الأول\nالسطر الثاني', durMs: 2000, edited: false, delim: '', translation: '', translationStale: false }
+  ];
+  var srt = buildSrt(subsToCues(subs), false);
+  assert(srt.indexOf('السطر الأول\nالسطر الثاني') !== -1, '#fix3-1 2行クリップはSRT内で改行を保持する -> ' + JSON.stringify(srt));
+})();
+
+// テスト2: 1行クリップ(「1行に戻す」後を想定) -> 改行が含まれない
+(function () {
+  var subs = [
+    { text: 'السطر الأول السطر الثاني', durMs: 2000, edited: false, delim: '', translation: '', translationStale: false }
+  ];
+  var srt = buildSrt(subsToCues(subs), false);
+  var cueBlock = srt.split('\n\n')[0];
+  assert(cueBlock.split('\n').length === 3, '#fix3-2 1行クリップのcueブロックは番号行+タイムコード行+本文1行のみ -> ' + JSON.stringify(cueBlock));
+})();
+
+// テスト3: 1行/2行混在の複数クリップで、通し番号とタイムコードが崩れない
+(function () {
+  var subs = [
+    { text: 'واحد', durMs: 1000, edited: false, delim: '', translation: '', translationStale: false },
+    { text: 'اثنان\nثلاثة', durMs: 1500, edited: false, delim: '', translation: '', translationStale: false },
+    { text: 'أربعة', durMs: 800, edited: false, delim: '', translation: '', translationStale: false }
+  ];
+  var cues = subsToCues(subs);
+  assert(cues.map(function (c) { return c.index; }).join(',') === '1,2,3', '#fix3-3 混在時も通し番号が1,2,3のまま');
+  assert(cues[0].startMs === 0 && cues[0].endMs === 1000, '#fix3-3 1番目のタイムコードが正しい');
+  assert(cues[1].startMs === 1000 && cues[1].endMs === 2500, '#fix3-3 2行クリップを挟んでも2番目のタイムコードが正しい(ギャップなし)');
+  assert(cues[2].startMs === 2500 && cues[2].endMs === 3300, '#fix3-3 3番目のタイムコードが正しい(ギャップなし)');
+  var srt = buildSrt(cues, false);
+  assert(srt.indexOf('اثنان\nثلاثة') !== -1, '#fix3-3 混在時も2行クリップの改行が保持される');
+})();
+
+// テスト4: BOM有り・無しの両方で改行・番号・タイムコードが壊れない
+(function () {
+  var subs = [
+    { text: 'واحد', durMs: 1000, edited: false, delim: '', translation: '', translationStale: false },
+    { text: 'اثنان\nثلاثة', durMs: 1500, edited: false, delim: '', translation: '', translationStale: false }
+  ];
+  var cues = subsToCues(subs);
+  var srtNoBom = buildSrt(cues, false);
+  var srtWithBom = buildSrt(cues, true);
+  assert(srtWithBom.charCodeAt(0) === 0xfeff, '#fix3-4 BOM有りは先頭にU+FEFFが付く');
+  assert(srtWithBom.slice(1) === srtNoBom, '#fix3-4 BOM有り無しでBOM以外(改行・番号・タイムコード)は完全一致する');
+  assert(srtWithBom.indexOf('اثنان\nثلاثة') !== -1, '#fix3-4 BOM有りでも2行クリップの改行が保持される');
+})();
+
+// テスト5: localStorage(v5)の保存/復元を挟んでも2行状態(本文中の改行)が保持される
+(function () {
+  var state = {
+    manuscript: 'مرحبا', cps: 12, bom: false, mode: 'edit',
+    clips: [
+      { text: 'السطر الأول\nالسطر الثاني', durMs: 2000, delim: '', edited: true, translation: '', translationStale: false }
+    ],
+    zoomIndex: 3, headTimeMs: 0, calibration: 1, fontSize: 55
+  };
+  var raw = serializeSession(state);
+  var restored = deserializeSession(raw);
+  assert(restored !== null, '#fix3-5 保存データが復元できる');
+  assert(restored.clips[0].text === 'السطر الأول\nالسطر الثاني', '#fix3-5 復元後も本文中の改行(2行状態)が保持される');
+  var srt = buildSrt(subsToCues(restored.clips), false);
+  assert(srt.indexOf('السطر الأول\nالسطر الثاني') !== -1, '#fix3-5 復元後のクリップからSRTを生成しても2行のまま出力される');
+})();
+
 // ⑦: 判定の3値分岐(境界値: 安全幅ちょうど、安全幅+1px)
 (function () {
   // 1文字10pxの決定的な擬似計測関数(スペースは幅0として単語区切りのみに使う)
