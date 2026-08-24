@@ -6,7 +6,7 @@ import { segmentManuscript, buildCues } from '../src/core/segment.js';
 import { formatSrtTime, formatTotalDuration, formatClock, MIN_DUR_MS, computeStartsMs, totalDurationMs, clipAt, ZOOM_LEVELS, msToPx, pxToMs, pickTickIntervalSec, clampZoomIndex } from '../src/core/time.js';
 import { buildSrt, snapCuesToFrameGrid, applyOverlap, FRAME_FPS } from '../src/core/srt.js';
 import {
-  subsFromSegments, setClipDuration, trimClipAtHead, extendClipToHead, mergeClipAt, deleteClipAt,
+  subsFromSegments, setClipDuration, trimClipAtHead, extendClipToHead, splitClipAtHead, mergeClipAt, deleteClipAt,
   recalcUneditedDurations, subsToCues, reconstructManuscript,
   textEquals, pushHistory, popHistory, charCountForText
 } from '../src/core/subs.js';
@@ -190,6 +190,31 @@ function makeSubs(dursMs) {
   var result = trimClipAtHead(subs, 1, 1100); // 1100-1000=100ms < 300ms
   assert(result.ok === false, '#T3 300ms未満のトリムは拒否される');
   assert(result.subs === subs, '#T3 拒否時は元の配列そのままが返る(状態不変)');
+})();
+
+// N: ヘッドが乗っているクリップをヘッド位置で2つに分割する
+// #N1: 開始1000ms・尺2000ms(終端3000ms)のクリップをヘッド1800msで分割 -> 尺800ms/1200msの2クリップになる
+(function () {
+  var subs = makeSubs([1000, 2000, 1500]); // index1: 開始1000ms, 終端3000ms
+  var result = splitClipAtHead(subs, 1, 1800);
+  assert(result.ok, '#N1 分割が成功する');
+  assert(result.subs.length === 4, '#N1 クリップ件数が1件増える -> ' + result.subs.length);
+  assert(result.subs[1].durMs === 800, '#N1 前半の尺が800msになる -> ' + result.subs[1].durMs);
+  assert(result.subs[2].durMs === 1200, '#N1 後半の尺が1200msになる -> ' + result.subs[2].durMs);
+  assert(result.subs[1].text === subs[1].text && result.subs[2].text === subs[1].text, '#N1 テキストは両方に複製される(元クリップと同一)');
+  assert(result.subs[1].edited === true && result.subs[2].edited === true, '#N1 分割後の両クリップはedited:trueになる');
+  var starts = computeStartsMs(result.subs);
+  assert(starts[3] === 3000, '#N1 後続クリップの開始時刻は変わらない(合計尺は不変) -> ' + starts[3]);
+})();
+
+// #N2: 分割後どちらかが最小尺(300ms)未満になる場合は拒否され状態不変
+(function () {
+  var subs = makeSubs([1000, 2000, 1500]); // index1: 開始1000ms, 終端3000ms
+  var result = splitClipAtHead(subs, 1, 1200); // 前半200ms < 300ms
+  assert(result.ok === false, '#N2 前半が300ms未満になる分割は拒否される');
+  assert(result.subs === subs, '#N2 拒否時は元の配列そのままが返る(状態不変)');
+  var result2 = splitClipAtHead(subs, 1, 2800); // 後半200ms < 300ms
+  assert(result2.ok === false, '#N2 後半が300ms未満になる分割も拒否される');
 })();
 
 // D: 選択中のクリップの終端を再生ヘッドまで伸ばす(トリムのヘッド追従版・伸ばす方向のみ)
@@ -1107,6 +1132,12 @@ function makeSubs(dursMs) {
   assert(resolveShortcutAction('D') === 'extendToHead', '#kbd3 Dキー(大文字)も延長アクションに解決される');
   assert(resolveShortcutAction('e') === null, '#kbd3 廃止されたeキーは何にも解決されない');
   assert(resolveShortcutAction('E') === null, '#kbd3 廃止されたEキー(大文字)も何にも解決されない');
+})();
+
+// resolveShortcutAction: n/Nは'split'に解決される(ヘッドが乗っているクリップをヘッド位置で分割)
+(function () {
+  assert(resolveShortcutAction('n') === 'split', '#kbd5 nキーは分割アクションに解決される');
+  assert(resolveShortcutAction('N') === 'split', '#kbd5 Nキー(大文字)も分割アクションに解決される');
 })();
 
 // resolveShortcutAction: 他の既存ショートカットの割り当ては変更されない(回帰確認)

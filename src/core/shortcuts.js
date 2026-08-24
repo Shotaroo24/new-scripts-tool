@@ -21,6 +21,9 @@ export function resolveShortcutAction(key) {
     case 's':
     case 'S':
       return 'trim';
+    case 'n':
+    case 'N':
+      return 'split';
     case 'd':
     case 'D':
       return 'extendToHead';

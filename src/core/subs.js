@@ -73,6 +73,38 @@ export function trimClipAtHead(subs, index, headMs) {
   return { ok: true, subs: next };
 }
 
+// N: ヘッドが乗っているクリップを、ヘッド位置で2つに分割する。
+// 前半の尺は (ヘッドms − クリップ開始ms)、後半の尺は残りとなる。テキスト・英訳は
+// 分割せず両方に元クリップの複製を持たせる(どちらに何を残すかは呼び出し側での編集に委ねる)。
+// 分割後どちらかの尺が最小尺(300ms)未満になる場合は拒否して元の配列を返す。
+export function splitClipAtHead(subs, index, headMs) {
+  var starts = computeStartsMs(subs);
+  var firstDur = Math.round(headMs) - starts[index];
+  var secondDur = subs[index].durMs - firstDur;
+  if (firstDur < MIN_DUR_MS || secondDur < MIN_DUR_MS) {
+    return { ok: false, subs: subs };
+  }
+  var next = cloneSubs(subs);
+  var clip = next[index];
+  var half = {
+    text: clip.text,
+    durMs: firstDur,
+    edited: true,
+    delim: clip.delim,
+    translation: clip.translation,
+    translationStale: clip.translationStale
+  };
+  next.splice(index, 1, half, {
+    text: clip.text,
+    durMs: secondDur,
+    edited: true,
+    delim: clip.delim,
+    translation: clip.translation,
+    translationStale: clip.translationStale
+  });
+  return { ok: true, subs: next };
+}
+
 // D: 選択中のクリップの終端を再生ヘッドまで伸ばす(ヘッドms − クリップ開始ms を新しい尺にする)。
 // 伸ばす操作のため、結果が現在の尺以下(ヘッドが終端以前、またはちょうど終端)なら拒否する。
 // リップルにより後続クリップの開始時刻は自動的に後ろへずれる。テキストは変更しない。

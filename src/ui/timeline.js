@@ -6,7 +6,7 @@ import {
 } from '../core/time.js';
 import { segmentManuscript } from '../core/segment.js';
 import {
-  subsFromSegments, cloneSubs, setClipDuration, trimClipAtHead, extendClipToHead, mergeClipAt, deleteClipAt,
+  subsFromSegments, cloneSubs, setClipDuration, trimClipAtHead, extendClipToHead, splitClipAtHead, mergeClipAt, deleteClipAt,
   recalcUneditedDurations, subsToCues, reconstructManuscript, textEquals,
   pushHistory, popHistory
 } from '../core/subs.js';
@@ -511,6 +511,25 @@ function doTrim() {
   onChangeCallback();
 }
 
+// N: ヘッドが乗っているクリップをヘッド位置で2つに分割する。テキスト・英訳は
+// 分割せず両方に複製する(振り分けはこの後ユーザーが編集する想定)。
+function doSplit() {
+  var idx = currentClipIndex();
+  if (idx === -1) return;
+  history = pushHistory(history, subs);
+  var result = splitClipAtHead(subs, idx, headTimeMs);
+  if (!result.ok) {
+    history = history.slice(0, -1);
+    setHint('これ以上分割できません（最小0.3秒）');
+    return;
+  }
+  subs = result.subs;
+  selectedClipIndex = idx;
+  setHint('クリップを分割しました');
+  renderTimeline();
+  onChangeCallback();
+}
+
 // D: 選択中のクリップ(ヘッドが乗っているクリップとは限らない)の終端を
 // 再生ヘッドまで伸ばす。ヘッドが選択クリップの終端以前にある場合は拒否する。
 function doExtendToHead() {
@@ -992,6 +1011,8 @@ document.addEventListener('keydown', function (e) {
     doDelete();
   } else if (action === 'trim') {
     doTrim();
+  } else if (action === 'split') {
+    doSplit();
   } else if (action === 'extendToHead') {
     doExtendToHead();
   } else if (action === 'merge') {
