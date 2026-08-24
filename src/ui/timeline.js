@@ -426,6 +426,13 @@ function seekTo(tMs) {
   var total = totalDurationMs(subs);
   headTimeMs = Math.max(0, Math.min(total, tMs));
   playbackJustEnded = false;
+  // 再生中のシークは再生の基準点を打ち直す。これをしないと、次のrAFフレームで
+  // playTickが古いplayStartHeadMs/playStartPerfからheadTimeMsを再計算し、
+  // シークをなかったことにして巻き戻してしまう。
+  if (playing) {
+    playStartPerf = performance.now();
+    playStartHeadMs = headTimeMs;
+  }
   refreshPlayheadUI();
   autoScrollToPlayhead();
   onChangeCallback();
