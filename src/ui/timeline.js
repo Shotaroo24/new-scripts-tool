@@ -267,9 +267,23 @@ function applySubtitleStyle(frameEl, safeGuideEl, subtitleTextEl, judgeBadgeEl, 
   }
 }
 
+// renderPreviewの直近の描画内容(再生中は毎フレーム呼ばれるため、内容が変わって
+// いなければDOM更新をスキップして再描画によるちらつきを防ぐ)。
+var lastPreviewSubs = null;
+var lastPreviewIdx = null;
+var lastPreviewEnded = null;
+
 // 9:16実寸プレビューを更新する(再生ヘッド位置のクリップに追随)。
 function renderPreview() {
   var idx = currentClipIndex();
+
+  if (subs === lastPreviewSubs && idx === lastPreviewIdx && playbackJustEnded === lastPreviewEnded) {
+    return;
+  }
+  lastPreviewSubs = subs;
+  lastPreviewIdx = idx;
+  lastPreviewEnded = playbackJustEnded;
+
   var sub = idx === -1 ? null : subs[idx];
 
   if (playbackJustEnded) {
