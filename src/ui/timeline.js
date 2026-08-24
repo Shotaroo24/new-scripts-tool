@@ -10,6 +10,7 @@ import {
   recalcUneditedDurations, subsToCues, reconstructManuscript, textEquals,
   pushHistory, popHistory
 } from '../core/subs.js';
+import { isEditableTarget, resolveShortcutAction } from '../core/shortcuts.js';
 import { formatNumberedClips, parseNumberedTranslation } from '../core/translation.js';
 import { copyTextWithFallback } from './clipboard.js';
 import {
@@ -510,7 +511,7 @@ function doTrim() {
   onChangeCallback();
 }
 
-// E: 選択中のクリップ(ヘッドが乗っているクリップとは限らない)の終端を
+// D: 選択中のクリップ(ヘッドが乗っているクリップとは限らない)の終端を
 // 再生ヘッドまで伸ばす。ヘッドが選択クリップの終端以前にある場合は拒否する。
 function doExtendToHead() {
   var idx = selectedClipIndex;
@@ -952,6 +953,7 @@ editorCps.addEventListener('change', function () {
 
 document.addEventListener('keydown', function (e) {
   if (mode !== 'edit' || modalOpen) return;
+  if (isEditableTarget(e.target)) return;
 
   if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
     e.preventDefault();
@@ -961,32 +963,44 @@ document.addEventListener('keydown', function (e) {
   if (e.key === ' ' || e.code === 'Space') {
     e.preventDefault();
     togglePlay();
-  } else if (e.key === 'ArrowUp') {
+    return;
+  }
+  if (e.key === 'ArrowUp') {
     e.preventDefault();
     stepUp();
-  } else if (e.key === 'ArrowDown') {
+    return;
+  }
+  if (e.key === 'ArrowDown') {
     e.preventDefault();
     stepDown();
-  } else if (e.key === 'ArrowLeft') {
+    return;
+  }
+  if (e.key === 'ArrowLeft') {
     e.preventDefault();
     seekTo(headTimeMs - 100);
-  } else if (e.key === 'ArrowRight') {
+    return;
+  }
+  if (e.key === 'ArrowRight') {
     e.preventDefault();
     seekTo(headTimeMs + 100);
-  } else if (e.key === 's' || e.key === 'S') {
-    doTrim();
-  } else if (e.key === 'e' || e.key === 'E') {
-    doExtendToHead();
-  } else if (e.key === 'm' || e.key === 'M') {
-    doMerge();
-  } else if (e.key === 'l' || e.key === 'L') {
-    cyclePlaybackRate();
-  } else if (e.key === 'x' || e.key === 'X') {
-    zoomIn();
-  } else if (e.key === 'z' || e.key === 'Z') {
-    zoomOut();
-  } else if (e.key === 'Delete' || e.key === 'Backspace') {
+    return;
+  }
+
+  var action = resolveShortcutAction(e.key);
+  if (action === 'delete') {
     e.preventDefault();
     doDelete();
+  } else if (action === 'trim') {
+    doTrim();
+  } else if (action === 'extendToHead') {
+    doExtendToHead();
+  } else if (action === 'merge') {
+    doMerge();
+  } else if (action === 'cyclePlaybackRate') {
+    cyclePlaybackRate();
+  } else if (action === 'zoomIn') {
+    zoomIn();
+  } else if (action === 'zoomOut') {
+    zoomOut();
   }
 });

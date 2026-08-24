@@ -20,6 +20,7 @@ import {
 import {
   isValidSessionData, serializeSession, deserializeSession, migrateV4ToV5
 } from '../src/core/session.js';
+import { isEditableTarget, resolveShortcutAction } from '../src/core/shortcuts.js';
 
 var passCount = 0;
 var failCount = 0;
@@ -191,42 +192,42 @@ function makeSubs(dursMs) {
   assert(result.subs === subs, '#T3 拒否時は元の配列そのままが返る(状態不変)');
 })();
 
-// E: 選択中のクリップの終端を再生ヘッドまで伸ばす(トリムのヘッド追従版・伸ばす方向のみ)
-// #E1: 開始1000ms・尺2000ms(終端3000ms)のクリップをヘッド4200msまで伸ばす -> 尺3200ms、リップルで後続の開始が後ろへずれる
+// D: 選択中のクリップの終端を再生ヘッドまで伸ばす(トリムのヘッド追従版・伸ばす方向のみ)
+// #D1: 開始1000ms・尺2000ms(終端3000ms)のクリップをヘッド4200msまで伸ばす -> 尺3200ms、リップルで後続の開始が後ろへずれる
 (function () {
   var subs = makeSubs([1000, 2000, 1500]); // index1: 開始1000ms, 終端3000ms
   var result = extendClipToHead(subs, 1, 4200);
-  assert(result.ok, '#E1 伸ばす操作が成功する');
-  assert(result.subs[1].durMs === 3200, '#E1 尺が3200msになる -> ' + result.subs[1].durMs);
-  assert(result.subs[1].edited === true, '#E1 伸ばした後のクリップはedited:trueになる');
+  assert(result.ok, '#D1 伸ばす操作が成功する');
+  assert(result.subs[1].durMs === 3200, '#D1 尺が3200msになる -> ' + result.subs[1].durMs);
+  assert(result.subs[1].edited === true, '#D1 伸ばした後のクリップはedited:trueになる');
   var starts = computeStartsMs(result.subs);
-  assert(starts[2] === 4200, '#E1 リップルで後続クリップの開始がヘッド位置(4200ms)まで後ろにずれる -> ' + starts[2]);
-  assert(result.subs[1].text === subs[1].text, '#E1 テキストは変更されない');
+  assert(starts[2] === 4200, '#D1 リップルで後続クリップの開始がヘッド位置(4200ms)まで後ろにずれる -> ' + starts[2]);
+  assert(result.subs[1].text === subs[1].text, '#D1 テキストは変更されない');
 })();
 
-// #E2: ヘッドが選択クリップの終端と同じ(3000ms)場合は伸ばせない(拒否・状態不変)
+// #D2: ヘッドが選択クリップの終端と同じ(3000ms)場合は伸ばせない(拒否・状態不変)
 (function () {
   var subs = makeSubs([1000, 2000, 1500]); // index1の終端は3000ms
   var result = extendClipToHead(subs, 1, 3000);
-  assert(result.ok === false, '#E2 ヘッドが終端と同じ場合は拒否される(伸びない)');
-  assert(result.subs === subs, '#E2 拒否時は元の配列そのままが返る(状態不変)');
+  assert(result.ok === false, '#D2 ヘッドが終端と同じ場合は拒否される(伸びない)');
+  assert(result.subs === subs, '#D2 拒否時は元の配列そのままが返る(状態不変)');
 })();
 
-// #E3: ヘッドが選択クリップの終端より前(2400ms < 3000ms)の場合も伸ばせない(縮める方向には使えない)
+// #D3: ヘッドが選択クリップの終端より前(2400ms < 3000ms)の場合も伸ばせない(縮める方向には使えない)
 (function () {
   var subs = makeSubs([1000, 2000, 1500]);
   var result = extendClipToHead(subs, 1, 2400);
-  assert(result.ok === false, '#E3 ヘッドが終端より前の場合は拒否される(トリムとは違い縮められない)');
-  assert(result.subs === subs, '#E3 拒否時は元の配列そのままが返る(状態不変)');
+  assert(result.ok === false, '#D3 ヘッドが終端より前の場合は拒否される(トリムとは違い縮められない)');
+  assert(result.subs === subs, '#D3 拒否時は元の配列そのままが返る(状態不変)');
 })();
 
-// #E4: 最終クリップも伸ばせる(次のクリップが無いため単純に総尺が伸びるだけ)
+// #D4: 最終クリップも伸ばせる(次のクリップが無いため単純に総尺が伸びるだけ)
 (function () {
   var subs = makeSubs([1000, 2000, 1500]); // index2: 開始3000ms, 終端4500ms
   var result = extendClipToHead(subs, 2, 5000);
-  assert(result.ok, '#E4 最終クリップも伸ばせる');
-  assert(result.subs[2].durMs === 2000, '#E4 尺が2000msになる -> ' + result.subs[2].durMs);
-  assert(totalDurationMs(result.subs) === 5000, '#E4 総尺がヘッド位置(5000ms)になる');
+  assert(result.ok, '#D4 最終クリップも伸ばせる');
+  assert(result.subs[2].durMs === 2000, '#D4 尺が2000msになる -> ' + result.subs[2].durMs);
+  assert(totalDurationMs(result.subs) === 5000, '#D4 総尺がヘッド位置(5000ms)になる');
 })();
 
 // 4: 結合。テキスト・訳文がスペース連結、尺が合算、配列長が1減る。delimは右側を引き継ぐ
@@ -1079,6 +1080,43 @@ function makeSubs(dursMs) {
   }
   var last = overlapped.length - 1;
   assert(overlapped[last].endMs === snapped[last].endMs, '#snap4 最終キューのend_msはオーバーラップの対象外(変更されない)');
+})();
+
+// --- タイムライン編集モードのキーボードショートカット(src/core/shortcuts.js) ---
+
+// isEditableTarget: input/textarea/select/contentEditableにフォーカス中はショートカットを止める判定
+(function () {
+  assert(isEditableTarget({ tagName: 'INPUT' }) === true, '#kbd1 INPUTフォーカス中はtrue');
+  assert(isEditableTarget({ tagName: 'TEXTAREA' }) === true, '#kbd1 TEXTAREAフォーカス中はtrue');
+  assert(isEditableTarget({ tagName: 'SELECT' }) === true, '#kbd1 SELECTフォーカス中はtrue');
+  assert(isEditableTarget({ tagName: 'DIV', isContentEditable: true }) === true, '#kbd1 contentEditable要素はtrue');
+  assert(isEditableTarget({ tagName: 'DIV' }) === false, '#kbd1 通常のDIVはfalse(ショートカット有効)');
+  assert(isEditableTarget({ tagName: 'BUTTON' }) === false, '#kbd1 BUTTONはfalse(ショートカット有効)');
+  assert(isEditableTarget(null) === false, '#kbd1 targetがnullでもfalse(例外を投げない)');
+})();
+
+// resolveShortcutAction: Backspace/Deleteは'delete'に解決される(選択中クリップの削除)
+(function () {
+  assert(resolveShortcutAction('Backspace') === 'delete', '#kbd2 Backspaceは削除アクションに解決される');
+  assert(resolveShortcutAction('Delete') === 'delete', '#kbd2 Deleteは削除アクションに解決される');
+})();
+
+// resolveShortcutAction: d/Dは'extendToHead'に解決される(選択中クリップの終端をヘッドまで伸ばす、旧E)
+(function () {
+  assert(resolveShortcutAction('d') === 'extendToHead', '#kbd3 dキーは延長アクションに解決される');
+  assert(resolveShortcutAction('D') === 'extendToHead', '#kbd3 Dキー(大文字)も延長アクションに解決される');
+  assert(resolveShortcutAction('e') === null, '#kbd3 廃止されたeキーは何にも解決されない');
+  assert(resolveShortcutAction('E') === null, '#kbd3 廃止されたEキー(大文字)も何にも解決されない');
+})();
+
+// resolveShortcutAction: 他の既存ショートカットの割り当ては変更されない(回帰確認)
+(function () {
+  assert(resolveShortcutAction('s') === 'trim', '#kbd4 sキーはトリムのまま');
+  assert(resolveShortcutAction('m') === 'merge', '#kbd4 mキーは結合のまま');
+  assert(resolveShortcutAction('l') === 'cyclePlaybackRate', '#kbd4 lキーは再生速度切替のまま');
+  assert(resolveShortcutAction('x') === 'zoomIn', '#kbd4 xキーはズームインのまま');
+  assert(resolveShortcutAction('z') === 'zoomOut', '#kbd4 zキーはズームアウトのまま(Ctrl+Zとの区別は呼び出し側の責務)');
+  assert(resolveShortcutAction('a') === null, '#kbd4 未割り当てキーはnull');
 })();
 
 console.log('');

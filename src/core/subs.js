@@ -73,7 +73,7 @@ export function trimClipAtHead(subs, index, headMs) {
   return { ok: true, subs: next };
 }
 
-// E: 選択中のクリップの終端を再生ヘッドまで伸ばす(ヘッドms − クリップ開始ms を新しい尺にする)。
+// D: 選択中のクリップの終端を再生ヘッドまで伸ばす(ヘッドms − クリップ開始ms を新しい尺にする)。
 // 伸ばす操作のため、結果が現在の尺以下(ヘッドが終端以前、またはちょうど終端)なら拒否する。
 // リップルにより後続クリップの開始時刻は自動的に後ろへずれる。テキストは変更しない。
 export function extendClipToHead(subs, index, headMs) {
