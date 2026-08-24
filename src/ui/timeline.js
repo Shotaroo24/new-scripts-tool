@@ -452,6 +452,12 @@ function stopPlayback() {
 }
 
 function playTick(now) {
+  // startPlaybackの再入等で孤児化したチェーンが残っていても、playingがfalseに
+  // なっていれば自ら終了する(rafIdの上書きによるゾンビループ化を防ぐ)。
+  if (!playing) {
+    rafId = null;
+    return;
+  }
   var elapsedMs = (now - playStartPerf) * playbackRate;
   var total = totalDurationMs(subs);
   var t = playStartHeadMs + elapsedMs;
@@ -470,6 +476,7 @@ function playTick(now) {
 }
 
 function startPlayback() {
+  if (playing) return; // 再入ガード: 二重に呼ばれてもrafIdを上書きしてチェーンを孤児化させない
   if (subs.length === 0) return;
   var total = totalDurationMs(subs);
   if (headTimeMs >= total) headTimeMs = 0;
