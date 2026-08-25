@@ -458,7 +458,13 @@ function playTick(now) {
     rafId = null;
     return;
   }
-  var elapsedMs = (now - playStartPerf) * playbackRate;
+  // rAFのコールバック引数(now)は、同じタスク内で直前にperformance.now()を呼んで
+  // 記録したplayStartPerfより過去の値になることがある(startPlayback/シーク直後の
+  // 最初のフレームで実測、ブラウザのタイムスタンプ計測タイミングに起因)。
+  // 負のelapsedMsを許すとheadTimeMsがシーク先より前(直前のクリップ側)へ一瞬
+  // 巻き戻り、プレビューに1つ前のクリップの本文が一瞬だけ表示されてしまう。
+  // 再生位置はシーク基準点より後退しないため0未満をクランプする。
+  var elapsedMs = Math.max(0, (now - playStartPerf) * playbackRate);
   var total = totalDurationMs(subs);
   var t = playStartHeadMs + elapsedMs;
   if (t >= total) {
