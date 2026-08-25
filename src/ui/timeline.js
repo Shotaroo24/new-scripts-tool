@@ -158,6 +158,7 @@ export function restoreEditorViewIfNeeded(dataMode) {
 
 var HEAD_BACK_THRESHOLD_MS = 150;
 var AUTOSCROLL_MARGIN = 60;
+var HANDLE_CLICK_THRESHOLD_PX = 3;
 
 function currentPxPerSec() {
   return ZOOM_LEVELS[zoomIndex];
@@ -371,11 +372,15 @@ function renderTimeline() {
       e.stopPropagation();
       e.preventDefault();
       try { handle.setPointerCapture(e.pointerId); } catch (err) { /* キャプチャ失敗時もハンドル上でのドラッグ自体は継続できる */ }
-      history = pushHistory(history, subs);
-      dragState = { index: index, startX: e.clientX, startDurMs: subs[index].durMs };
+      dragState = { index: index, startX: e.clientX, startDurMs: subs[index].durMs, historyPushed: false };
     });
     handle.addEventListener('pointermove', function (e) {
       if (!dragState || dragState.index !== index) return;
+      if (Math.abs(e.clientX - dragState.startX) < HANDLE_CLICK_THRESHOLD_PX) return;
+      if (!dragState.historyPushed) {
+        history = pushHistory(history, subs);
+        dragState.historyPushed = true;
+      }
       var deltaMs = pxToMs(e.clientX - dragState.startX, currentPxPerSec());
       subs = setClipDuration(subs, index, dragState.startDurMs + deltaMs);
       relayout();
@@ -383,8 +388,19 @@ function renderTimeline() {
     handle.addEventListener('pointerup', function (e) {
       if (!dragState || dragState.index !== index) return;
       try { handle.releasePointerCapture(e.pointerId); } catch (err) { /* 未キャプチャの場合は何もしない */ }
+      // ハンドル上でのpointerdown/upはclickイベントを発生させない(preventDefault済みのため)。
+      // ほぼ動いていない場合はドラッグではなくクリックとみなし、その位置へシークする。
+      // これがないと各クリップ右端10px(特に最後のクリップ)をクリックしてもプレイヘッドが動かせない。
+      if (Math.abs(e.clientX - dragState.startX) < HANDLE_CLICK_THRESHOLD_PX) {
+        var rect = clip.getBoundingClientRect();
+        var offsetX = e.clientX - rect.left;
+        selectedClipIndex = index;
+        seekTo(starts[index] + pxToMs(offsetX, currentPxPerSec())); // seekTo内でonChangeCallbackが呼ばれる
+        updateCurrentHighlight();
+      } else {
+        onChangeCallback();
+      }
       dragState = null;
-      onChangeCallback();
     });
     clip.addEventListener('click', function (e) {
       var rect = clip.getBoundingClientRect();
@@ -522,7 +538,13 @@ function stepUp() {
 
 function stepDown() {
   var idx = currentClipIndex();
-  if (idx === -1 || idx >= subs.length - 1) return;
+  if (idx === -1) return;
+  // 最後のクリップにいる場合、次のクリップ開始位置が存在しないため終端(最後のクリップの右端)へ進める。
+  if (idx >= subs.length - 1) {
+    selectedClipIndex = idx;
+    seekTo(totalDurationMs(subs));
+    return;
+  }
   var starts = computeStartsMs(subs);
   selectedClipIndex = idx + 1;
   seekTo(starts[idx + 1]);
