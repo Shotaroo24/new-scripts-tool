@@ -76,14 +76,19 @@ export function trimClipAtHead(subs, index, headMs) {
 // N: ヘッドが乗っているクリップを、ヘッド位置で2つに分割する。
 // 前半の尺は (ヘッドms − クリップ開始ms)、後半の尺は残りとなる。テキスト・英訳は
 // 分割せず両方に元クリップの複製を持たせる(どちらに何を残すかは呼び出し側での編集に委ねる)。
-// 分割後どちらかの尺が最小尺(300ms)未満になる場合は拒否して元の配列を返す。
+// クリップ長が最小尺(300ms)の2倍未満なら理論上分割不可能なため拒否する。
+// それ以外はヘッド位置が有効範囲(クリップ開始+300ms 〜 終了-300ms)の外でも、
+// 拒否せず範囲内の最も近い位置へスナップする(短いクリップほど有効範囲が
+// 狭く、再生中に狙って止めるのは現実的でないため)。
 export function splitClipAtHead(subs, index, headMs) {
   var starts = computeStartsMs(subs);
-  var firstDur = Math.round(headMs) - starts[index];
-  var secondDur = subs[index].durMs - firstDur;
-  if (firstDur < MIN_DUR_MS || secondDur < MIN_DUR_MS) {
+  var clipDur = subs[index].durMs;
+  if (clipDur < MIN_DUR_MS * 2) {
     return { ok: false, subs: subs };
   }
+  var firstDur = Math.round(headMs) - starts[index];
+  firstDur = Math.max(MIN_DUR_MS, Math.min(clipDur - MIN_DUR_MS, firstDur));
+  var secondDur = clipDur - firstDur;
   var next = cloneSubs(subs);
   var clip = next[index];
   var half = {

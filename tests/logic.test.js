@@ -207,14 +207,26 @@ function makeSubs(dursMs) {
   assert(starts[3] === 3000, '#N1 後続クリップの開始時刻は変わらない(合計尺は不変) -> ' + starts[3]);
 })();
 
-// #N2: 分割後どちらかが最小尺(300ms)未満になる場合は拒否され状態不変
+// #N2: 分割後どちらかが最小尺(300ms)未満になる位置を指定した場合は拒否せず、
+// 有効範囲(クリップ開始+300ms 〜 終了-300ms)内の最も近い位置へスナップする
 (function () {
   var subs = makeSubs([1000, 2000, 1500]); // index1: 開始1000ms, 終端3000ms
-  var result = splitClipAtHead(subs, 1, 1200); // 前半200ms < 300ms
-  assert(result.ok === false, '#N2 前半が300ms未満になる分割は拒否される');
-  assert(result.subs === subs, '#N2 拒否時は元の配列そのままが返る(状態不変)');
-  var result2 = splitClipAtHead(subs, 1, 2800); // 後半200ms < 300ms
-  assert(result2.ok === false, '#N2 後半が300ms未満になる分割も拒否される');
+  var result = splitClipAtHead(subs, 1, 1200); // 前半200ms < 300ms -> 300msへスナップ
+  assert(result.ok, '#N2 前半が300ms未満になる位置でも拒否されずスナップして成功する');
+  assert(result.subs[1].durMs === 300, '#N2 前半は最小尺300msにスナップされる -> ' + result.subs[1].durMs);
+  assert(result.subs[2].durMs === 1700, '#N2 後半は残り1700msになる -> ' + result.subs[2].durMs);
+  var result2 = splitClipAtHead(subs, 1, 2800); // 後半200ms < 300ms -> 300msへスナップ
+  assert(result2.ok, '#N2 後半が300ms未満になる位置でも拒否されずスナップして成功する');
+  assert(result2.subs[1].durMs === 1700, '#N2 前半は残り1700msになる -> ' + result2.subs[1].durMs);
+  assert(result2.subs[2].durMs === 300, '#N2 後半は最小尺300msにスナップされる -> ' + result2.subs[2].durMs);
+})();
+
+// #N3: クリップ長が最小尺の2倍(600ms)未満の場合は理論上分割不可能なため拒否され状態不変
+(function () {
+  var subs = makeSubs([1000, 500, 1500]); // index1: 尺500ms(600ms未満)
+  var result = splitClipAtHead(subs, 1, 1250); // ちょうど中間でも600ms未満なので不可能
+  assert(result.ok === false, '#N3 600ms未満のクリップは分割できず拒否される');
+  assert(result.subs === subs, '#N3 拒否時は元の配列そのままが返る(状態不変)');
 })();
 
 // D: 選択中のクリップの終端を再生ヘッドまで伸ばす(トリムのヘッド追従版・伸ばす方向のみ)
